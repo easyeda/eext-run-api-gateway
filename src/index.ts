@@ -30,6 +30,7 @@ const HEARTBEAT_TIMEOUT_MS = 5000;
 const CONNECTION_TIMEOUT_MS = 1500; // 每个端口的连接+握手超时
 const STORAGE_KEY_AUTO_CONNECT = 'autoConnectEnabled';
 const MBUS_TOPIC_STATUS = 'api-gateway-status';
+const MBUS_TOPIC_CONTROL = 'api-gateway-control';
 
 // ─── 状态 ───────────────────────────────────────────────────────────
 let currentPort: number | null = null;
@@ -40,20 +41,122 @@ let heartbeatPending = false;
 let autoConnectEnabled = true;
 let retryCount = 0;
 let windowId: string | null = null; // 窗口唯一标识符
+let isConnecting = false;
+let connectionSessionId = 0;
+let messageBusRegistered = false;
+
+interface GatewayControlRequest {
+	command: 'reconnect' | 'stop';
+}
+
+interface GatewayControlResponse {
+	handled: boolean;
+	connected: boolean;
+	windowId: string | null;
+}
 
 /**
  * 获取当前连接状态（供 messageBus RPC 调用）
  */
 function getConnectionStatus(): {
 	connected: boolean;
+	connecting: boolean;
 	port: number | null;
 	windowId: string | null;
 } {
 	return {
 		connected: handshakeVerified,
+		connecting: isConnecting,
 		port: currentPort,
 		windowId,
 	};
+}
+
+function ensureMessageBusServices(): void {
+	if (messageBusRegistered)
+		return;
+
+	eda.sys_MessageBus.rpcService(MBUS_TOPIC_STATUS, () => getConnectionStatus());
+	eda.sys_MessageBus.rpcService(MBUS_TOPIC_CONTROL, (request?: GatewayControlRequest): GatewayControlResponse => {
+		if (request?.command === 'reconnect') {
+			performReconnect();
+		}
+		else if (request?.command === 'stop') {
+			performStopConnection(false);
+		}
+
+		return {
+			handled: true,
+			connected: handshakeVerified,
+			windowId,
+		};
+	});
+
+	messageBusRegistered = true;
+}
+
+function nextConnectionSessionId(): number {
+	connectionSessionId += 1;
+	return connectionSessionId;
+}
+
+function isConnectionSessionActive(sessionId: number): boolean {
+	return sessionId === connectionSessionId;
+}
+
+function closeWebSocket(): void {
+	try {
+		eda.sys_WebSocket.close(WS_ID);
+	}
+	catch { /* ignore */ }
+}
+
+function cancelConnectionFlow(resetRetryCount = true): void {
+	nextConnectionSessionId();
+	isConnecting = false;
+	clearRetryTimer();
+	stopHeartbeat();
+	handshakeVerified = false;
+	currentPort = null;
+	windowId = null;
+	if (resetRetryCount) {
+		retryCount = 0;
+	}
+	closeWebSocket();
+}
+
+function performReconnect(): void {
+	eda.sys_Message.showToastMessage(eda.sys_I18n.text('Reconnecting...'));
+	cancelConnectionFlow();
+	void scanAndConnect();
+}
+
+function performStopConnection(showToast = true): void {
+	cancelConnectionFlow();
+	if (showToast) {
+		eda.sys_Message.showToastMessage(eda.sys_I18n.text('Connection stopped'));
+	}
+}
+
+async function dispatchControlCommand(command: GatewayControlRequest['command']): Promise<void> {
+	try {
+		const response = await eda.sys_MessageBus.rpcCall(MBUS_TOPIC_CONTROL, { command }, 500) as GatewayControlResponse;
+		if (response?.handled) {
+			if (command === 'stop') {
+				eda.sys_Message.showToastMessage(eda.sys_I18n.text('Connection stopped'));
+			}
+			return;
+		}
+	}
+	catch {}
+
+	ensureMessageBusServices();
+	if (command === 'reconnect') {
+		performReconnect();
+	}
+	else {
+		performStopConnection();
+	}
 }
 
 // ─── 生命周期 ────────────────────────────────────────────────────────
@@ -63,11 +166,12 @@ function getConnectionStatus(): {
  */
 // eslint-disable-next-line unused-imports/no-unused-vars
 export function activate(status?: 'onStartupFinished', arg?: string): void {
+	ensureMessageBusServices();
 	const storedValue = eda.sys_Storage.getExtensionUserConfig(STORAGE_KEY_AUTO_CONNECT);
 	autoConnectEnabled = storedValue !== false;
 
 	if (autoConnectEnabled) {
-		scanAndConnect();
+		void scanAndConnect();
 	}
 }
 
@@ -75,12 +179,7 @@ export function activate(status?: 'onStartupFinished', arg?: string): void {
  * 扩展停用时清理资源
  */
 export function deactivate(): void {
-	clearRetryTimer();
-	stopHeartbeat();
-	try {
-		eda.sys_WebSocket.close(WS_ID);
-	}
-	catch { /* ignore */ }
+	cancelConnectionFlow(false);
 }
 
 // ─── 菜单操作 ────────────────────────────────────────────────────────
@@ -89,16 +188,7 @@ export function deactivate(): void {
  * 手动重新连接（菜单项）
  */
 export function reconnect(): void {
-	eda.sys_Message.showToastMessage(eda.sys_I18n.text('Reconnecting...'));
-	clearRetryTimer();
-	stopHeartbeat();
-	handshakeVerified = false;
-	retryCount = 0;
-	try {
-		eda.sys_WebSocket.close(WS_ID);
-	}
-	catch { /* ignore */ }
-	scanAndConnect();
+	void dispatchControlCommand('reconnect');
 }
 
 /**
@@ -108,7 +198,7 @@ export async function about(): Promise<void> {
 	let status: string;
 
 	// 通过 messageBus 获取 WebSocket 连接状态
-	let statusInfo = { connected: false, port: 0, windowId: null };
+	let statusInfo = { connected: false, connecting: false, port: 0, windowId: null };
 	try {
 		statusInfo = await eda.sys_MessageBus.rpcCall(MBUS_TOPIC_STATUS, undefined, 300);
 	}
@@ -119,6 +209,9 @@ export async function about(): Promise<void> {
 		const portInfo = `Connected (port ${statusInfo.port})`;
 		const windowInfo = statusInfo.windowId ? `\nWindow ID: ${statusInfo.windowId}` : '\nWindow ID: (not registered)';
 		status = `${portInfo}${windowInfo}`;
+	}
+	else if (statusInfo?.connecting) {
+		status = 'Connecting...';
 	}
 	else {
 		status = 'Disconnected';
@@ -148,16 +241,7 @@ export async function toggleAutoConnect(): Promise<void> {
  * 停止连接并取消重试（菜单项）
  */
 export function stopConnection(): void {
-	clearRetryTimer();
-	stopHeartbeat();
-	handshakeVerified = false;
-	currentPort = null;
-	retryCount = 0;
-	try {
-		eda.sys_WebSocket.close(WS_ID);
-	}
-	catch { /* ignore */ }
-	eda.sys_Message.showToastMessage(eda.sys_I18n.text('Connection stopped'));
+	void dispatchControlCommand('stop');
 }
 
 // ─── 端口扫描与连接 ──────────────────────────────────────────────────
@@ -170,29 +254,50 @@ export function stopConnection(): void {
  * 逐端口尝试，等待服务端发送 handshake 消息来确认身份。
  */
 async function scanAndConnect(): Promise<void> {
-	clearRetryTimer();
-
-	if (retryCount >= MAX_RETRIES) {
-		eda.sys_Message.showToastMessage(eda.sys_I18n.text('Max retries reached'), ESYS_ToastMessageType.ERROR);
+	if (isConnecting) {
 		return;
 	}
 
-	for (let port = PORT_START; port <= PORT_END; port++) {
-		const found = await tryConnectToPort(port);
-		if (found) {
-			currentPort = port;
-			retryCount = 0;
-			startHeartbeat();
+	const sessionId = nextConnectionSessionId();
+	isConnecting = true;
+	clearRetryTimer();
+
+	try {
+		if (retryCount >= MAX_RETRIES) {
+			eda.sys_Message.showToastMessage(eda.sys_I18n.text('Max retries reached'), ESYS_ToastMessageType.ERROR);
 			return;
 		}
-	}
 
-	retryCount++;
-	console.warn(`[API-Gateway] No bridge server found on ports ${PORT_START}-${PORT_END}, retrying in ${RETRY_DELAY_MS}ms...`);
-	eda.sys_Message.showToastMessage(
-		`${eda.sys_I18n.text('Bridge not found, retrying in ', undefined, undefined, String(RETRY_DELAY_MS / 1000))} (${retryCount}/${MAX_RETRIES})`,
-	);
-	scheduleRetry();
+		for (let port = PORT_START; port <= PORT_END; port++) {
+			if (!isConnectionSessionActive(sessionId)) {
+				return;
+			}
+
+			const found = await tryConnectToPort(port, sessionId);
+			if (!isConnectionSessionActive(sessionId)) {
+				return;
+			}
+
+			if (found) {
+				currentPort = port;
+				retryCount = 0;
+				startHeartbeat(sessionId);
+				return;
+			}
+		}
+
+		retryCount++;
+		console.warn(`[API-Gateway] No bridge server found on ports ${PORT_START}-${PORT_END}, retrying in ${RETRY_DELAY_MS}ms...`);
+		eda.sys_Message.showToastMessage(
+			`${eda.sys_I18n.text('Bridge not found, retrying in ', undefined, undefined, String(RETRY_DELAY_MS / 1000))} (${retryCount}/${MAX_RETRIES})`,
+		);
+		scheduleRetry(sessionId);
+	}
+	finally {
+		if (isConnectionSessionActive(sessionId)) {
+			isConnecting = false;
+		}
+	}
 }
 
 /**
@@ -206,7 +311,7 @@ async function scanAndConnect(): Promise<void> {
  *
  * @returns true = 握手成功且连接保持；false = 超时或验证失败
  */
-function tryConnectToPort(port: number): Promise<boolean> {
+function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 	return new Promise((resolve) => {
 		let settled = false;
 
@@ -217,22 +322,19 @@ function tryConnectToPort(port: number): Promise<boolean> {
 				return;
 			settled = true;
 			clearTimeout(timer);
-			if (!success) {
-				try {
-					eda.sys_WebSocket.close(WS_ID);
-				}
-				catch { /* ignore */ }
+			if (!success && isConnectionSessionActive(sessionId)) {
+				closeWebSocket();
 			}
 			resolve(success);
 		};
 
+		if (!isConnectionSessionActive(sessionId)) {
+			resolve(false);
+			return;
+		}
+
 		// 先关闭旧连接（register 对同 ID 活跃连接不会更新参数）
-		try {
-			eda.sys_WebSocket.close(WS_ID);
-		}
-		catch {
-			// ignore
-		}
+		closeWebSocket();
 
 		timer = setTimeout(() => settle(false, 'timeout'), CONNECTION_TIMEOUT_MS);
 
@@ -244,6 +346,11 @@ function tryConnectToPort(port: number): Promise<boolean> {
 				`ws://127.0.0.1:${port}/eda`,
 				// 收到消息的回调（在扫描阶段处理握手，后续处理业务消息）
 				async (event: MessageEvent) => {
+					if (!isConnectionSessionActive(sessionId)) {
+						settle(false, 'session cancelled');
+						return;
+					}
+
 					try {
 						const msg = JSON.parse(event.data);
 
@@ -261,8 +368,6 @@ function tryConnectToPort(port: number): Promise<boolean> {
 								eda.sys_Message.showToastMessage(
 									`${eda.sys_I18n.text('Bridge connected (port ', undefined, undefined, String(port))})`,
 								);
-								// 注册 RPC 服务，供其他扩展实例（如 About 窗口）查询状态
-								eda.sys_MessageBus.rpcService(MBUS_TOPIC_STATUS, () => getConnectionStatus());
 								settle(true, 'handshake OK');
 							}
 							else {
@@ -296,9 +401,14 @@ function tryConnectToPort(port: number): Promise<boolean> {
 
 // ─── 心跳检测 ────────────────────────────────────────────────────────
 
-function startHeartbeat(): void {
+function startHeartbeat(sessionId: number): void {
 	stopHeartbeat();
 	heartbeatTimer = setInterval(() => {
+		if (!isConnectionSessionActive(sessionId)) {
+			stopHeartbeat();
+			return;
+		}
+
 		if (!handshakeVerified)
 			return;
 		try {
@@ -310,21 +420,21 @@ function startHeartbeat(): void {
 			}));
 			// 如果超时内没收到 pong，重新扫描
 			setTimeout(() => {
+				if (!isConnectionSessionActive(sessionId)) {
+					return;
+				}
+
 				if (heartbeatPending) {
 					console.warn('[API-Gateway] Heartbeat timeout, reconnecting...');
-					stopHeartbeat();
-					try {
-						eda.sys_WebSocket.close(WS_ID);
-					}
-					catch { /* ignore */ }
-					scanAndConnect();
+					cancelConnectionFlow();
+					void scanAndConnect();
 				}
 			}, HEARTBEAT_TIMEOUT_MS);
 		}
 		catch {
 			// send 失败说明已断开
-			stopHeartbeat();
-			scanAndConnect();
+			cancelConnectionFlow();
+			void scanAndConnect();
 		}
 	}, HEARTBEAT_INTERVAL_MS);
 }
@@ -339,9 +449,14 @@ function stopHeartbeat(): void {
 
 // ─── 重试 ────────────────────────────────────────────────────────────
 
-function scheduleRetry(): void {
+function scheduleRetry(sessionId: number): void {
 	clearRetryTimer();
-	retryTimer = setTimeout(() => scanAndConnect(), RETRY_DELAY_MS);
+	retryTimer = setTimeout(() => {
+		if (!isConnectionSessionActive(sessionId) || isConnecting) {
+			return;
+		}
+		void scanAndConnect();
+	}, RETRY_DELAY_MS);
 }
 
 function clearRetryTimer(): void {
