@@ -1,0 +1,119 @@
+{
+	"name": "run-api-gateway",
+	"uuid": "bded3619ce6a4e60a35c7f4a84739702",
+	"displayName": "Run API Gateway",
+	"description": "为 AI 编程工具提供 WebSocket 网关桥接服务",
+	"version": "0.1.0",
+	"publisher": "JLCEDA",
+	"engines": {
+		"eda": "^3.2.0"
+	},
+	"license": "Apache-2.0",
+	"repository": {
+		"type": "extension-store",
+		"url": ""
+	},
+	"categories": "Other",
+	"keywords": [
+		"API",
+		"Gateway",
+		"Bridge",
+		"AI"
+	],
+	"images": {
+		"logo": "./images/logo.png"
+	},
+	"homepage": "",
+	"bugs": "",
+	"activationEvents": {
+		"onStartupFinished": true
+	},
+	"entry": "./dist/index",
+	"dependentExtensions": {},
+	"headerMenus": {
+		"home": [
+			{
+				"id": "API Gateway",
+				"title": "API Gateway",
+				"menuItems": [
+					{
+						"id": "Reconnect",
+						"title": "Reconnect",
+						"registerFn": "reconnect"
+					},
+					{
+						"id": "StopConnection",
+						"title": "Stop Connection",
+						"registerFn": "stopConnection"
+					},
+					{
+						"id": "ToggleAutoConnect",
+						"title": "Toggle Auto-Connect Status",
+						"registerFn": "toggleAutoConnect"
+					},
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					}
+				]
+			}
+		],
+		"sch": [
+			{
+				"id": "API Gateway",
+				"title": "API Gateway",
+				"menuItems": [
+					{
+						"id": "Reconnect",
+						"title": "Reconnect",
+						"registerFn": "reconnect"
+					},
+					{
+						"id": "StopConnection",
+						"title": "Stop Connection",
+						"registerFn": "stopConnection"
+					},
+					{
+						"id": "ToggleAutoConnect",
+						"title": "Toggle Auto-Connect Status",
+						"registerFn": "toggleAutoConnect"
+					},
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					}
+				]
+			}
+		],
+		"pcb": [
+			{
+				"id": "API Gateway",
+				"title": "API Gateway",
+				"menuItems": [
+					{
+						"id": "Reconnect",
+						"title": "Reconnect",
+						"registerFn": "reconnect"
+					},
+					{
+						"id": "StopConnection",
+						"title": "Stop Connection",
+						"registerFn": "stopConnection"
+					},
+					{
+						"id": "ToggleAutoConnect",
+						"title": "Toggle Auto-Connect Status",
+						"registerFn": "toggleAutoConnect"
+					},
+					{
+						"id": "About",
+						"title": "About...",
+						"registerFn": "about"
+					}
+				]
+			}
+		]
+	}
+}

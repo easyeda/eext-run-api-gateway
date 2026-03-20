@@ -1,0 +1,13 @@
+{
+	"About": "About",
+	"API Gateway v": "API Gateway v${1}",
+	"Connected (port ": "Connected (port ${1}",
+	"Disconnected": "Disconnected",
+	"Reconnecting...": "Reconnecting...",
+	"Bridge not found, retrying in ": "Bridge not found, retrying in ${1}s",
+	"Bridge connected (port ": "Bridge connected (port ${1}",
+	"Auto-Connect enabled": "Auto-Connect enabled",
+	"Auto-Connect disabled": "Auto-Connect disabled",
+	"Connection stopped": "Connection stopped",
+	"Max retries reached": "Max retries reached"
+}

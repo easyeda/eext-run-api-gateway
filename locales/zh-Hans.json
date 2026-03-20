@@ -1,0 +1,13 @@
+{
+	"About": "关于",
+	"API Gateway v": "API Gateway v${1}",
+	"Connected (port ": "已连接（端口 ${1}",
+	"Disconnected": "未连接",
+	"Reconnecting...": "正在重新连接...",
+	"Bridge not found, retrying in ": "未找到 Bridge 服务，${1} 秒后重试",
+	"Bridge connected (port ": "Bridge 已连接（端口 ${1}",
+	"Auto-Connect enabled": "已启用自动连接",
+	"Auto-Connect disabled": "已禁用自动连接",
+	"Connection stopped": "已停止连接",
+	"Max retries reached": "已达到最大重试次数"
+}

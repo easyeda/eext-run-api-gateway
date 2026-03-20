@@ -1,0 +1,8 @@
+/.vscode/*
+!/.vscode/extensions.json
+!/.vscode/settings.json
+/coverage/
+/dist/
+/node_modules/
+/.eslintcache
+debug.log
