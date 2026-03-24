@@ -3,10 +3,10 @@
 	"uuid": "bded3619ce6a4e60a35c7f4a84739702",
 	"displayName": "Run API Gateway",
 	"description": "为 AI 编程工具提供 WebSocket 网关桥接服务",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"publisher": "JLCEDA",
 	"engines": {
-		"eda": "^3.2.0"
+		"eda": "~3.2.0"
 	},
 	"license": "Apache-2.0",
 	"repository": {
@@ -21,7 +21,7 @@
 		"AI"
 	],
 	"images": {
-		"logo": "./images/logo.png"
+		"logo": "./images/logo.jpg"
 	},
 	"homepage": "",
 	"bugs": "",
