@@ -29,7 +29,7 @@
 
 1. 先在 AI 工具环境中安装 skill：`npx clawhub@latest install easyeda-api`
 2. 在嘉立创EDA中安装本扩展
-3. 打开嘉立创EDA，并确保扩展已成功加载，顶部菜单栏出现 **API Gateway**
+3. 确保扩展已成功加载，顶部菜单栏出现 **API Gateway**
 4. 在 AI 工具中输入：`嘉立创EDA，启动！`
 5. AI 工具会根据 EasyEDA skill 的工作流启动 Bridge Server，并开始连接本扩展
 6. 连接成功后，AI 工具即可通过 Bridge Server 向嘉立创EDA发送代码执行请求
