@@ -3,7 +3,7 @@
 	"uuid": "bded3619ce6a4e60a35c7f4a84739702",
 	"displayName": "Run API Gateway",
 	"description": "为 AI 编程工具提供 WebSocket 网关桥接服务",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"publisher": "JLCEDA",
 	"engines": {
 		"eda": "~3.2.0"
@@ -11,7 +11,7 @@
 	"license": "Apache-2.0",
 	"repository": {
 		"type": "extension-store",
-		"url": ""
+		"url": "https://ext.lceda.cn/item/oshwhub/run-api-gateway"
 	},
 	"categories": "Other",
 	"keywords": [
@@ -23,7 +23,7 @@
 	"images": {
 		"logo": "./images/logo.jpg"
 	},
-	"homepage": "",
+	"homepage": "https://ext.lceda.cn/item/oshwhub/run-api-gateway",
 	"bugs": "",
 	"activationEvents": {
 		"onStartupFinished": true
