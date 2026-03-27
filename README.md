@@ -59,7 +59,7 @@
 
 开始前，请先确认你已经具备以下条件：
 
-- 已安装嘉立创EDA 专业版，并且可以正常启动软件
+- 已熟悉嘉立创EDA 专业版的使用
 - 电脑可以访问互联网，用于安装依赖与下载工具
 - 你可以准备自己的 AI 模型提供商账号或 API Key；如果暂时没有，也可以先使用 OpenCode 提供的免费模型开始体验
 - 建议安装 **Node.js 22 LTS** 或更高版本，这样对 OpenCode 和相关工具兼容性更稳妥
@@ -139,12 +139,17 @@ opencode --version
 opencode
 ```
 
+![OpenCode 首次启动界面](./images/readme/init_4_1.png)
+
 首次使用时，建议完成以下初始化操作：
 
-1. 在 OpenCode 界面中执行 `/connect`
+1. 如果你拥有模型提供商的订阅，就在 OpenCode 界面中执行 `/connect`，否则直接跳到第 5 步
 2. 选择你要使用的模型提供商
-3. 你可以按提示登录或填写自己的 API Key；如果暂时没有 Key，也可以先选择 OpenCode 提供的免费模型（使用 `/models` 切换模型）
+  ![`/connect` 配置模型提供商界面](./images/readme/init_4_2.png)
+3. 你可以按提示登录或填写自己的 API Key
 4. 看到连接成功提示后，返回主界面
+5. 在 OpenCode 界面中执行 `/models` 切换模型（可以选择免费或你前面连接的模型提供商的付费模型）
+  ![`/models` 选择模型界面](./images/readme/init_4_3.png)
 
 如果这一步没有完成，后续即使 Skill 和扩展都安装好了，OpenCode 也无法真正帮你调用 EDA。
 
@@ -152,17 +157,13 @@ opencode
 >
 > 使用免费模型可以先完成基础体验，但本教程中很多能力，尤其是复杂指令理解、多步骤规划、长链路调用和结果整理，都会明显受到模型能力影响。若你要更稳定地测试完整流程，建议优先选择总体测评参数较好的大模型。
 
-![OpenCode 首次启动界面](./images/readme/init_4_1.png)
-
-![`/connect` 配置模型提供商界面](./images/readme/init_4_2.png)
-
-![`/models` 选择模型界面](./images/readme/init_4_3.png)
-
 ### 5. 安装 EasyEDA API Skill
 
 本扩展本身只负责“让 EDA 接入桥接网络”，真正负责启动 Bridge Server、提供 API 文档、指导 AI 进行调用的是 **easyeda-api** Skill。
 
 为了让它对所有项目都可用，推荐把 Skill 安装到“用户目录下的全局技能目录”，这样你以后在不同目录启动 OpenCode 时也更容易复用。
+
+#### 5.1 从 ClawHub 单行命令安装
 
 对于大多数用户，尤其是 Windows 用户，直接打开终端后执行下面这条命令即可：
 
@@ -176,6 +177,42 @@ npx clawhub@latest install easyeda-api --workdir "$HOME" --dir skills
 - `--dir skills`：把 Skill 放在用户目录下的 `skills/` 文件夹里
 
 ![安装 Skill](./images/readme/init_5_1.png)
+
+#### 5.2 如果命令安装失败，如何手动下载并安装 Skill
+
+如果你遇到网络限制、`npx` 不可用、`clawhub` 无法正常执行，或者就是想手动安装，也可以直接下载压缩包并放到本地 Skill 目录中。
+
+手动下载地址：
+
+- <https://image.lceda.cn/files/easyeda-api.zip>
+
+手动安装步骤如下：
+
+1. 下载上面的 `easyeda-api.zip`
+2. 在你的用户目录下找到或新建 `skills` 文件夹
+3. 在 `skills` 文件夹里新建一个 `easyeda-api` 文件夹
+4. 将 `easyeda-api.zip` 解压到这个 `easyeda-api` 文件夹中
+5. 解压完成后，确认目录结构正确
+
+推荐的目标路径示例：
+
+- Windows：`%USERPROFILE%\skills\easyeda-api`
+- macOS / Linux：`~/skills/easyeda-api`
+
+解压完成后，`easyeda-api` 文件夹下应该能直接看到这些内容：
+
+- `SKILL.md`
+- `package.json`
+- `guide/`
+- `references/`
+- `user-guide/`
+
+请特别注意：不要解压成多套嵌套目录。
+
+- 正确示例：`~/skills/easyeda-api/SKILL.md`
+- 错误示例：`~/skills/easyeda-api/easyeda-api/SKILL.md`
+
+#### 5.3 安装完成之后
 
 安装完成后，建议重新启动一次 OpenCode，或让 OpenCode 重新读取当前环境。
 
@@ -345,6 +382,8 @@ opencode --version
 ```bash
 npx clawhub@latest install easyeda-api --workdir "$HOME" --dir skills
 ```
+
+如果命令安装仍然失败，可以回到前面的 [5.1 如果命令安装失败，如何手动下载并安装 Skill](README.md#51-如果命令安装失败如何手动下载并安装-skill) 按步骤手动安装。
 
 如果安装过程中报错，通常是 Node.js、网络、或 npm 权限问题。
 
