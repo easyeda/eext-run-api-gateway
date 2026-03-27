@@ -3,7 +3,7 @@
 	"uuid": "bded3619ce6a4e60a35c7f4a84739702",
 	"displayName": "Run API Gateway",
 	"description": "为 AI 编程工具提供 WebSocket 网关桥接服务",
-	"version": "1.0.1",
+	"version": "1.0.3",
 	"publisher": "JLCEDA",
 	"engines": {
 		"eda": "~3.2.0"
