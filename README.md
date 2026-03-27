@@ -75,7 +75,7 @@
 
 #### 2.1 下载并安装
 
-推荐前往 Node.js 官网安装 **22 LTS** 或更高版本：<https://nodejs.org/>
+推荐前往 Node.js 官网安装 **22 LTS** 或更高版本：<https://nodejs.org/zh-cn/download>
 
 > TIP
 >
