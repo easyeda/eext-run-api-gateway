@@ -2,5 +2,11 @@
 	"About...": "关于...",
 	"Reconnect": "重新连接",
 	"Stop Connection": "停止连接",
-	"Toggle Auto-Connect Status": "切换自动连接状态"
+	"Toggle Auto-Connect Status": "切换自动连接状态",
+	"Run API Gateway": "Run API Gateway",
+	"为 AI 编程工具提供 WebSocket 网关桥接服务": "为 AI 编程工具提供 WebSocket 网关桥接服务",
+	"API": "API",
+	"Gateway": "网关",
+	"Bridge": "桥接",
+	"AI": "AI"
 }

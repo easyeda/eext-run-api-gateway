@@ -2,5 +2,11 @@
 	"About...": "About...",
 	"Reconnect": "Reconnect",
 	"Stop Connection": "Stop Connection",
-	"Toggle Auto-Connect Status": "Toggle Auto-Connect Status"
+	"Toggle Auto-Connect Status": "Toggle Auto-Connect Status",
+	"Run API Gateway": "Run API Gateway",
+	"为 AI 编程工具提供 WebSocket 网关桥接服务": "Provides WebSocket gateway bridge service for AI programming tools",
+	"API": "API",
+	"Gateway": "Gateway",
+	"Bridge": "Bridge",
+	"AI": "AI"
 }
