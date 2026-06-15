@@ -215,12 +215,14 @@ jobs:
           else
             # README.md is Chinese, find en and swap
             EN_README=""
-            if [ -f "README_en.md" ]; then
+            if [ -f "README_EN.md" ]; then
+              EN_README="README_EN.md"
+            elif [ -f "README_en.md" ]; then
               EN_README="README_en.md"
             elif [ -f "README.en.md" ]; then
               EN_README="README.en.md"
             else
-              EN_README=$(ls README_en-*.md README.en-*.md 2>/dev/null | head -1)
+              EN_README=$(ls README_EN-*.md README_en-*.md README.en-*.md README.En-*.md 2>/dev/null | head -1)
             fi
 
             if [ -z "$EN_README" ]; then
