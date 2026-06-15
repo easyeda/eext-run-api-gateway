@@ -1,0 +1,304 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build project
+        run: npm run build
+
+      - name: Get version & extension name from extension.json
+        id: meta
+        run: |
+          echo "VERSION=$(jq -r .version extension.json)" >> $GITHUB_ENV
+          echo "EEXTNAME=$(jq -r .name extension.json)" >> $GITHUB_ENV
+
+      - name: Check and create tag
+        id: check_tag
+        run: |
+          VERSION=${{ env.VERSION }}
+          TAG="v${VERSION}"
+
+          echo "🔎 检查 tag $TAG 是否存在..."
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "⚠️ Tag $TAG 已存在，跳过发布。"
+            echo "SKIP_RELEASE=true" >> $GITHUB_ENV
+          else
+            echo "✅ Tag $TAG 不存在，创建并推送。"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "SKIP_RELEASE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Extract changelog for version
+        if: env.SKIP_RELEASE == 'false'
+        id: changelog
+        run: |
+          VERSION=${{ env.VERSION }}
+          EEXTNAME=${{ env.EEXTNAME }}
+          echo "🔎 Extracting changelog for version $VERSION from CHANGELOG.md"
+          ESCAPED_VERSION=$(echo "$VERSION" | sed 's/\./\\./g')
+
+          if [ -f ]; then
+            # 支持多种 CHANGELOG 格式（兼容大小写 V）：
+            # - # v1.5.3 或 # V1.5.3 或 # 1.5.3
+            # - ## v1.5.3 或 ## V1.5.3 或 ## 1.5.3
+            # - ## [1.5.3] - 2024-01-01 或 ## [v1.5.3]
+            NOTES=$(awk '
+              BEGIN { found=0 }
+              # 匹配版本行（兼容大小写 v/V）
+              /^(#|##) \[?[vV]?'"$ESCAPED_VERSION"'\]?([[:space:]-]|$)/ {
+                if (found) exit
+                found=1
+                next
+              }
+              # 遇到下一个版本标题时停止
+              /^(#|##) \[?[vV]?[0-9]+\.[0-9]+\.[0-9]+\]?([[:space:]-]|$)/ {
+                if (found) exit
+              }
+              # 遇到一级标题（如"更新日志"、"Changelog"、"修改记录"）时停止
+              /^# [^[\-0-9]/ {
+                if (found) exit
+              }
+              found { print }
+            ' CHANGELOG.md)
+
+            # 清理空行
+            NOTES=$(echo "$NOTES" | sed '/^[[:space:]]*$/d' | sed '1{/^$/d}')
+
+            if [ -z "$NOTES" ]; then
+              echo "⚠️ CHANGELOG.md 中未找到版本 $VERSION 的记录，使用默认说明"
+              NOTES="Release v${VERSION}"
+            else
+              echo "✅ 已从 CHANGELOG.md 中提取版本 $VERSION 的更新日志"
+            fi
+          else
+            echo "⚠️ 未找到 CHANGELOG.md 文件，使用默认说明"
+            NOTES="Release v${VERSION}"
+          fi
+
+          # 添加页脚
+          NOTES="${NOTES}
+
+          ---
+          由GitHub Actions自动构建并发布
+          Built and released automatically by GitHub Actions
+
+          也可前往[嘉立创EDA扩展广场](https://jlc-ext.com/item/oshwhub/${EEXTNAME})下载
+          Also available at [JLCEDA Extension Plaza](https://jlcext.com/item/oshwlab/${EEXTNAME})"
+
+          # 使用 EOF 分隔符设置多行环境变量
+          echo "RELEASE_NOTES<<EOF" >> $GITHUB_ENV
+          echo "$NOTES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+          echo "------ Release Notes ------"
+          echo "$NOTES"
+          echo "---------------------------"
+
+      - name: Build zh-cn package
+        if: env.SKIP_RELEASE == 'false'
+        run: |
+          VERSION=${{ env.VERSION }}
+          EEXTNAME=${{ env.EEXTNAME }}
+          DIST_DIR="build/dist"
+          BASE_FILE="${DIST_DIR}/${EEXTNAME}_v${VERSION}.eext"
+          ZH_FILE="${DIST_DIR}/${EEXTNAME}_v${VERSION}_zh-cn.eext"
+
+          echo "Building zh-cn package..."
+
+          # Detect language by counting Chinese characters in README.md
+          CN_COUNT=$(grep -oP '[\x{4e00}-\x{9fff}]' README.md 2>/dev/null | wc -l)
+          if [ "$CN_COUNT" -gt 10 ]; then
+            IS_CHINESE=true
+          else
+            IS_CHINESE=false
+          fi
+          echo "README.md Chinese chars: $CN_COUNT, is_chinese: $IS_CHINESE"
+
+          if [ "$IS_CHINESE" = "true" ]; then
+            # README.md is Chinese, just copy
+            echo "README.md is Chinese, just copy"
+            cp "$BASE_FILE" "$ZH_FILE"
+          else
+            # README.md is English, find zh and swap
+            ZH_README=""
+            if [ -f "README_zh.md" ]; then
+              ZH_README="README_zh.md"
+            elif [ -f "README.zh.md" ]; then
+              ZH_README="README.zh.md"
+            else
+              ZH_README=$(ls README_zh-*.md README.zh-*.md 2>/dev/null | head -1)
+            fi
+
+            if [ -z "$ZH_README" ]; then
+              echo "README.md is English, no zh found, just copy"
+              cp "$BASE_FILE" "$ZH_FILE"
+            else
+              echo "README.md is English, swap zh: $ZH_README"
+              mv README.md README.en.md
+              cp "$ZH_README" README.md
+              find . -name "*.md" -not -path "./build/*" -not -path "./node_modules/*" -not -path "./.git/*" -exec sed -i 's/README\.md/README.en.md/g' {} +
+
+              # Swap extension.json fields with zh-Hans translations
+              ZH_I18N="locales/extensionJson/zh-Hans.json"
+              if [ -f "$ZH_I18N" ]; then
+                echo "Swapping extension.json with zh-Hans translations..."
+                TMP_EXT=$(mktemp)
+                jq --slurpfile i18n "$ZH_I18N" '
+                  (if .displayName then .displayName = ($i18n[0].displayName // $i18n[0][.displayName] // .displayName) else . end) |
+                  (if .description then .description = ($i18n[0].description // $i18n[0][.description] // .description) else . end) |
+                  (if .keywords then .keywords = [.keywords[] | ($i18n[0][.] // .)] else . end)
+                ' extension.json > "$TMP_EXT" && mv "$TMP_EXT" extension.json
+                echo "extension.json swapped to zh-Hans"
+              fi
+
+              npm run build
+              mv "$BASE_FILE" "$ZH_FILE"
+              git checkout -- "*.md" 2>/dev/null || true
+              git checkout -- extension.json 2>/dev/null || true
+              rm -f README.en.md 2>/dev/null || true
+            fi
+          fi
+
+          echo "Done: $ZH_FILE"
+
+      - name: Build global package
+        if: env.SKIP_RELEASE == 'false'
+        run: |
+          VERSION=${{ env.VERSION }}
+          EEXTNAME=${{ env.EEXTNAME }}
+          DIST_DIR="build/dist"
+          BASE_FILE="${DIST_DIR}/${EEXTNAME}_v${VERSION}.eext"
+          GLOBAL_FILE="${DIST_DIR}/${EEXTNAME}_v${VERSION}_global.eext"
+
+          echo "Building global package..."
+
+          # Detect language (reuse result from zh-cn or re-detect)
+          CN_COUNT=$(grep -oP '[\x{4e00}-\x{9fff}]' README.md 2>/dev/null | wc -l)
+          if [ "$CN_COUNT" -gt 10 ]; then
+            IS_CHINESE=true
+          else
+            IS_CHINESE=false
+          fi
+          echo "README.md Chinese chars: $CN_COUNT, is_chinese: $IS_CHINESE"
+
+          if [ "$IS_CHINESE" = "false" ]; then
+            # README.md is English, just copy
+            echo "README.md is English, just copy"
+            cp "$BASE_FILE" "$GLOBAL_FILE"
+          else
+            # README.md is Chinese, find en and swap
+            EN_README=""
+            if [ -f "README_en.md" ]; then
+              EN_README="README_en.md"
+            elif [ -f "README.en.md" ]; then
+              EN_README="README.en.md"
+            else
+              EN_README=$(ls README_en-*.md README.en-*.md 2>/dev/null | head -1)
+            fi
+
+            if [ -z "$EN_README" ]; then
+              echo "README.md is Chinese, no en found, just copy"
+              cp "$BASE_FILE" "$GLOBAL_FILE"
+            else
+              echo "README.md is Chinese, swap en: $EN_README"
+              mv README.md README.zh.md
+              cp "$EN_README" README.md
+              find . -name "*.md" -not -path "./build/*" -not -path "./node_modules/*" -not -path "./.git/*" -exec sed -i 's/README\.md/README.zh.md/g' {} +
+
+              # Swap extension.json fields with en translations
+              EN_I18N="locales/extensionJson/en.json"
+              if [ -f "$EN_I18N" ]; then
+                echo "Swapping extension.json with en translations..."
+                TMP_EXT=$(mktemp)
+                jq --slurpfile i18n "$EN_I18N" '
+                  (if .displayName then .displayName = ($i18n[0].displayName // $i18n[0][.displayName] // .displayName) else . end) |
+                  (if .description then .description = ($i18n[0].description // $i18n[0][.description] // .description) else . end) |
+                  (if .keywords then .keywords = [.keywords[] | ($i18n[0][.] // .)] else . end)
+                ' extension.json > "$TMP_EXT" && mv "$TMP_EXT" extension.json
+                echo "extension.json swapped to en"
+              fi
+
+              npm run build
+              mv "$BASE_FILE" "$GLOBAL_FILE"
+              git checkout -- "*.md" 2>/dev/null || true
+              git checkout -- extension.json 2>/dev/null || true
+              rm -f README.zh.md 2>/dev/null || true
+            fi
+          fi
+
+          echo "Done: $GLOBAL_FILE"
+
+      - name: Cleanup base eext
+        if: env.SKIP_RELEASE == 'false'
+        run: |
+          VERSION=${{ env.VERSION }}
+          EEXTNAME=${{ env.EEXTNAME }}
+          rm -f "build/dist/${EEXTNAME}_v${VERSION}.eext"
+          echo "Removed base eext"
+
+      - name: Debug check artifacts
+        if: env.SKIP_RELEASE == 'false'
+        run: |
+          VERSION=${{ env.VERSION }}
+          EEXTNAME=${{ env.EEXTNAME }}
+          DIST_DIR="build/dist"
+          ZH_FILE="${DIST_DIR}/${EEXTNAME}_v${VERSION}_zh-cn.eext"
+          GLOBAL_FILE="${DIST_DIR}/${EEXTNAME}_v${VERSION}_global.eext"
+
+          echo "🔍 检查构建产物..."
+
+          if [ -f "$ZH_FILE" ]; then
+            echo "✅ 中文版产物存在: $ZH_FILE"
+          else
+            echo "❌ 中文版产物不存在: $ZH_FILE"
+            ls -R build || true
+            exit 1
+          fi
+
+          if [ -f "$GLOBAL_FILE" ]; then
+            echo "✅ 国际版产物存在: $GLOBAL_FILE"
+          else
+            echo "❌ 国际版产物不存在: $GLOBAL_FILE"
+            ls -R build || true
+            exit 1
+          fi
+
+      - name: Upload Release
+        if: env.SKIP_RELEASE == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VERSION }}
+          name: Release v${{ env.VERSION }}
+          body: ${{ env.RELEASE_NOTES }}
+          files: |
+            build/dist/${{ env.EEXTNAME }}_v${{ env.VERSION }}_zh-cn.eext
+            build/dist/${{ env.EEXTNAME }}_v${{ env.VERSION }}_global.eext
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,3 +1,5 @@
+> **[English](README_EN.md)** | **中文**
+
 # Run API Gateway
 
 嘉立创EDA 专业版扩展 — 为 AI 编程工具（OpenCode、QwenCode、KimiCode 等）提供 WebSocket API 网关桥接服务。
