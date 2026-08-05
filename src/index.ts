@@ -174,16 +174,22 @@ function allowAutoReconnect(): boolean {
 // （窗口关闭/扩展停用）后由 standby 轮询接管。
 
 /**
- * 查询 messageBus 上是否有任意实例已持有连接。
+ * 查询 messageBus 上是否有任意实例已在管理连接（已连接或正在连接）。
+ *
+ * 注意：必须同时检查 connected 与 connecting——若只查 connected，会在"旧服务端断开
+ * 后多实例同时重连"的窗口期内误判"无 leader"，导致多个实例同时重连、双 leader
+ * 互相抢占连接（服务端日志表现为连接每 15-20 秒被关闭重建一次并反复弹 Toast）。
  * rpcCall 可能返回单个响应或数组（多实例时），宽容处理两种情况。
  */
 async function queryAnyLeaderConnected(): Promise<boolean> {
+	const isLeader = (r: { connected?: boolean; connecting?: boolean } | null | undefined): boolean =>
+		r?.connected === true || r?.connecting === true;
 	try {
 		const resp = await eda.sys_MessageBus.rpcCall(MBUS_TOPIC_STATUS, undefined, LEADER_QUERY_TIMEOUT_MS);
 		if (Array.isArray(resp)) {
-			return resp.some(r => r?.connected === true);
+			return resp.some(isLeader);
 		}
-		return resp?.connected === true;
+		return isLeader(resp);
 	}
 	catch {
 		// 无任何实例响应（本实例可能是第一个激活的）
@@ -634,7 +640,14 @@ function scheduleRetry(sessionId: number): void {
 		if (!isConnectionSessionActive(sessionId) || isConnecting) {
 			return;
 		}
-		void scanAndConnect();
+		// 重试前先查询：若其他实例已接管连接则转 standby，避免双 leader 竞态
+		void (async () => {
+			if (await queryAnyLeaderConnected()) {
+				becomeStandby();
+				return;
+			}
+			void scanAndConnect();
+		})();
 	}, RETRY_DELAY_MS);
 }
 
