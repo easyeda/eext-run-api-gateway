@@ -44,6 +44,7 @@ let windowId: string | null = null; // 窗口唯一标识符
 let isConnecting = false;
 let connectionSessionId = 0;
 let messageBusRegistered = false;
+let lastReconnectAt = 0; // 上次执行重连的时间戳（防重入，毫秒）
 
 interface GatewayControlRequest {
 	command: 'reconnect' | 'stop';
@@ -125,7 +126,21 @@ function cancelConnectionFlow(resetRetryCount = true): void {
 	closeWebSocket();
 }
 
+/**
+ * 执行重连：取消当前连接并重新扫描端口。
+ *
+ * 防重入说明：菜单点击会先触发 messageBus 广播，若广播响应超时还会走本地
+ * fallback，导致同一请求被执行两次、Toast 重复弹出。因此这里用时间戳做
+ * 1 秒内的去重，第二次重复调用直接忽略。
+ */
 function performReconnect(): void {
+	const now = Date.now();
+	// 1 秒内的重复重连请求直接忽略（messageBus 广播 + 本地 fallback 双路径防重）
+	if (now - lastReconnectAt < 1000) {
+		return;
+	}
+	lastReconnectAt = now;
+
 	eda.sys_Message.showToastMessage(eda.sys_I18n.text('Reconnecting...'));
 	cancelConnectionFlow();
 	void scanAndConnect();
@@ -135,27 +150,6 @@ function performStopConnection(showToast = true): void {
 	cancelConnectionFlow();
 	if (showToast) {
 		eda.sys_Message.showToastMessage(eda.sys_I18n.text('Connection stopped'));
-	}
-}
-
-async function dispatchControlCommand(command: GatewayControlRequest['command']): Promise<void> {
-	try {
-		const response = await eda.sys_MessageBus.rpcCall(MBUS_TOPIC_CONTROL, { command }, 500) as GatewayControlResponse;
-		if (response?.handled) {
-			if (command === 'stop') {
-				eda.sys_Message.showToastMessage(eda.sys_I18n.text('Connection stopped'));
-			}
-			return;
-		}
-	}
-	catch {}
-
-	ensureMessageBusServices();
-	if (command === 'reconnect') {
-		performReconnect();
-	}
-	else {
-		performStopConnection();
 	}
 }
 
@@ -186,9 +180,14 @@ export function deactivate(): void {
 
 /**
  * 手动重新连接（菜单项）
+ *
+ * 直接在本窗口执行，不再走 messageBus 广播：每个 EDA 窗口的扩展实例
+ * 是相互独立的（各自持有 WebSocket 连接与连接状态），广播会让所有窗口
+ * 一起重连并各自弹出 Toast，造成"正在重新连接.../Bridge 已连接"重复出现。
  */
 export function reconnect(): void {
-	void dispatchControlCommand('reconnect');
+	ensureMessageBusServices();
+	performReconnect();
 }
 
 /**
@@ -239,9 +238,11 @@ export async function toggleAutoConnect(): Promise<void> {
 
 /**
  * 停止连接并取消重试（菜单项）
+ *
+ * 同 reconnect：直接在本窗口执行，不走 messageBus 广播，避免多窗口重复操作。
  */
 export function stopConnection(): void {
-	void dispatchControlCommand('stop');
+	performStopConnection();
 }
 
 // ─── 端口扫描与连接 ──────────────────────────────────────────────────
