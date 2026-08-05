@@ -19,6 +19,8 @@
 import * as extensionConfig from '../extension.json';
 
 // ─── 配置 ───────────────────────────────────────────────────────────
+// 构建标记：用于在 EDA 扩展控制台日志中确认当前运行的版本
+const EXT_BUILD_TAG = '20260805-1650';
 const WS_ID = 'ai-bridge';
 const PORT_START = 49620;
 const PORT_END = 49629;
@@ -31,8 +33,6 @@ const CONNECTION_TIMEOUT_MS = 1500; // 每个端口的连接+握手超时
 const STORAGE_KEY_AUTO_CONNECT = 'autoConnectEnabled';
 const MBUS_TOPIC_STATUS = 'api-gateway-status';
 const MBUS_TOPIC_CONTROL = 'api-gateway-control';
-// 「已连接」Toast 最小间隔：防止断线重连循环时反复弹窗
-const CONNECTED_TOAST_MIN_INTERVAL_MS = 10_000;
 // 连接建立后的重连冷却期：期间心跳超时/send 失败不立即重连，避免多窗口实例互相抢占连接导致乒乓
 const RECONNECT_COOLDOWN_MS = 3_000;
 // 自动重连熔断：60 秒窗口内最多重连次数，超限停止自动重连（可手动菜单重连）
@@ -61,10 +61,10 @@ let isConnecting = false;
 let connectionSessionId = 0;
 let messageBusRegistered = false;
 let lastReconnectAt = 0; // 上次执行重连的时间戳（防重入，毫秒）
-let lastConnectedToastAt = 0; // 上次弹「已连接」Toast 的时间戳
 let connectedAt = 0; // 当前连接建立的时间戳
 let reconnectWindowStart = 0; // 自动重连熔断窗口起点
 let reconnectCount = 0; // 熔断窗口内自动重连次数
+let connectedToastShown = false; // 会话内是否已弹过「已连接」Toast（进程生命周期只弹一次）
 
 interface GatewayControlRequest {
 	command: 'reconnect' | 'stop';
@@ -317,12 +317,12 @@ export function activate(status?: 'onStartupFinished', arg?: string): void {
 	autoConnectEnabled = storedValue !== false;
 
 	if (autoConnectEnabled) {
-		console.warn(`[API-Gateway][${INSTANCE_ID}] activate, auto-connect enabled.`);
+		console.warn(`[API-Gateway][${INSTANCE_ID}] activate (build ${EXT_BUILD_TAG}), auto-connect enabled.`);
 		// 多实例选举：已有实例持有连接则 standby，否则本实例连接
 		void tryConnectWithElection();
 	}
 	else {
-		console.warn(`[API-Gateway][${INSTANCE_ID}] activate, auto-connect disabled.`);
+		console.warn(`[API-Gateway][${INSTANCE_ID}] activate (build ${EXT_BUILD_TAG}), auto-connect disabled.`);
 	}
 }
 
@@ -533,16 +533,17 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 									timestamp: Date.now(),
 								}));
 								console.warn(`[API-Gateway][${INSTANCE_ID}] handshake OK on port ${port}.`);
-								// 节流：断线重连循环时避免反复弹「已连接」Toast
-								const now = Date.now();
-								if (now - lastConnectedToastAt >= CONNECTED_TOAST_MIN_INTERVAL_MS) {
-									lastConnectedToastAt = now;
+								// 降噪：会话内只弹一次「已连接」Toast。
+								// 背景：多标签页实例共享 WS 连接时，连接可能被 EasyEDA 端周期性重建，
+								// 每次重建握手成功都会走到这里；反复弹窗对用户无意义，因此只弹首次。
+								if (!connectedToastShown) {
+									connectedToastShown = true;
 									eda.sys_Message.showToastMessage(
 										`${eda.sys_I18n.text('Bridge connected (port ', undefined, undefined, String(port))})`,
 									);
 								}
 								else {
-									console.warn(`[API-Gateway][${INSTANCE_ID}] handshake OK again, toast throttled.`);
+									console.warn(`[API-Gateway][${INSTANCE_ID}] handshake OK again, toast suppressed (shown once per session).`);
 								}
 								settle(true, 'handshake OK');
 							}
