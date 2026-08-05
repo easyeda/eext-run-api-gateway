@@ -38,8 +38,17 @@ const RECONNECT_COOLDOWN_MS = 3_000;
 // 自动重连熔断：60 秒窗口内最多重连次数，超限停止自动重连（可手动菜单重连）
 const RECONNECT_WINDOW_MS = 60_000;
 const MAX_RECONNECT_PER_WINDOW = 5;
+// 多实例选举：连接持有者查询超时（毫秒）
+const LEADER_QUERY_TIMEOUT_MS = 300;
+// standby 实例轮询接管间隔（毫秒）：持有者窗口关闭后，备用实例在 ≤1 个周期内接管
+const STANDBY_CHECK_INTERVAL_MS = 30_000;
 
 // ─── 状态 ───────────────────────────────────────────────────────────
+// 实例唯一标识：同扩展 UUID 的多个窗口/标签页实例共享 WS 连接与 messageBus，
+// 用该标识区分日志来源，避免多实例互相抢占连接
+const INSTANCE_ID = crypto.randomUUID().slice(0, 8);
+let isStandby = false; // 本实例处于备用模式（不持有连接，不碰 sys_WebSocket）
+let standbyTimer: ReturnType<typeof setInterval> | null = null; // standby 轮询定时器
 let currentPort: number | null = null;
 let handshakeVerified = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -157,6 +166,112 @@ function allowAutoReconnect(): boolean {
 	return true;
 }
 
+// ─── 多实例选举 ─────────────────────────────────────────────────────
+// 背景：同扩展 UUID 的多个窗口/标签页实例共享同一条 sys_WebSocket 连接与
+// messageBus。若每个实例都执行 scanAndConnect，其 tryConnectToPort 会先
+// closeWebSocket() 关闭共享连接再重建，导致多实例互相抢占、反复握手弹窗。
+// 方案：同一时刻只允许一个实例持有连接（leader），其余 standby；leader 消失
+// （窗口关闭/扩展停用）后由 standby 轮询接管。
+
+/**
+ * 查询 messageBus 上是否有任意实例已持有连接。
+ * rpcCall 可能返回单个响应或数组（多实例时），宽容处理两种情况。
+ */
+async function queryAnyLeaderConnected(): Promise<boolean> {
+	try {
+		const resp = await eda.sys_MessageBus.rpcCall(MBUS_TOPIC_STATUS, undefined, LEADER_QUERY_TIMEOUT_MS);
+		if (Array.isArray(resp)) {
+			return resp.some(r => r?.connected === true);
+		}
+		return resp?.connected === true;
+	}
+	catch {
+		// 无任何实例响应（本实例可能是第一个激活的）
+		return false;
+	}
+}
+
+/**
+ * 进入 standby 模式：不持有连接、不碰 sys_WebSocket，周期轮询等待接管。
+ */
+function becomeStandby(): void {
+	if (isStandby) {
+		return;
+	}
+	console.warn(`[API-Gateway][${INSTANCE_ID}] standby: another instance holds the connection.`);
+	isStandby = true;
+	nextConnectionSessionId();
+	isConnecting = false;
+	clearRetryTimer();
+	stopHeartbeat();
+	handshakeVerified = false;
+	currentPort = null;
+	windowId = null;
+	// 注意：不调用 closeWebSocket()，避免关闭 leader 实例的共享连接
+
+	stopStandbyMonitor();
+	standbyTimer = setInterval(() => {
+		void checkAndTakeOver();
+	}, STANDBY_CHECK_INTERVAL_MS);
+}
+
+function stopStandbyMonitor(): void {
+	if (standbyTimer) {
+		clearInterval(standbyTimer);
+		standbyTimer = null;
+	}
+}
+
+/**
+ * standby 轮询：发现无实例持有连接时，本实例接管成为 leader。
+ */
+async function checkAndTakeOver(): Promise<void> {
+	if (!isStandby) {
+		stopStandbyMonitor();
+		return;
+	}
+	const anyConnected = await queryAnyLeaderConnected();
+	if (anyConnected) {
+		return; // leader 仍在线
+	}
+	console.warn(`[API-Gateway][${INSTANCE_ID}] no leader found, taking over connection.`);
+	isStandby = false;
+	stopStandbyMonitor();
+	void scanAndConnect();
+}
+
+/**
+ * 激活入口的选举逻辑：已有 leader 则 standby，否则本实例连接。
+ */
+async function tryConnectWithElection(): Promise<void> {
+	const anyConnected = await queryAnyLeaderConnected();
+	if (anyConnected) {
+		becomeStandby();
+		return;
+	}
+	console.warn(`[API-Gateway][${INSTANCE_ID}] no leader, this instance takes the connection.`);
+	void scanAndConnect();
+}
+
+/**
+ * 断线后的自动重连入口：先查询是否有其他实例已持有连接。
+ * 若有（连接可能已被对方接管管理）→ 本实例转 standby 不抢；
+ * 若无 → 在熔断限制内重连。
+ */
+async function reconnectAfterQuerying(): Promise<void> {
+	if (isStandby) {
+		return;
+	}
+	const anyConnected = await queryAnyLeaderConnected();
+	if (anyConnected) {
+		becomeStandby();
+		return;
+	}
+	if (allowAutoReconnect()) {
+		void scanAndConnect();
+	}
+}
+
 /**
  * 执行重连：取消当前连接并重新扫描端口。
  *
@@ -196,7 +311,12 @@ export function activate(status?: 'onStartupFinished', arg?: string): void {
 	autoConnectEnabled = storedValue !== false;
 
 	if (autoConnectEnabled) {
-		void scanAndConnect();
+		console.warn(`[API-Gateway][${INSTANCE_ID}] activate, auto-connect enabled.`);
+		// 多实例选举：已有实例持有连接则 standby，否则本实例连接
+		void tryConnectWithElection();
+	}
+	else {
+		console.warn(`[API-Gateway][${INSTANCE_ID}] activate, auto-connect disabled.`);
 	}
 }
 
@@ -204,6 +324,7 @@ export function activate(status?: 'onStartupFinished', arg?: string): void {
  * 扩展停用时清理资源
  */
 export function deactivate(): void {
+	stopStandbyMonitor();
 	cancelConnectionFlow(false);
 }
 
@@ -293,6 +414,7 @@ async function scanAndConnect(): Promise<void> {
 	const sessionId = nextConnectionSessionId();
 	isConnecting = true;
 	clearRetryTimer();
+	console.warn(`[API-Gateway][${INSTANCE_ID}] scanning ports ${PORT_START}-${PORT_END}...`);
 
 	try {
 		if (retryCount >= MAX_RETRIES) {
@@ -313,6 +435,7 @@ async function scanAndConnect(): Promise<void> {
 			if (found) {
 				currentPort = port;
 				retryCount = 0;
+				console.warn(`[API-Gateway][${INSTANCE_ID}] connection established on port ${port}.`);
 				startHeartbeat(sessionId);
 				return;
 			}
@@ -403,6 +526,7 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 									windowId,
 									timestamp: Date.now(),
 								}));
+								console.warn(`[API-Gateway][${INSTANCE_ID}] handshake OK on port ${port}.`);
 								// 节流：断线重连循环时避免反复弹「已连接」Toast
 								const now = Date.now();
 								if (now - lastConnectedToastAt >= CONNECTED_TOAST_MIN_INTERVAL_MS) {
@@ -410,6 +534,9 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 									eda.sys_Message.showToastMessage(
 										`${eda.sys_I18n.text('Bridge connected (port ', undefined, undefined, String(port))})`,
 									);
+								}
+								else {
+									console.warn(`[API-Gateway][${INSTANCE_ID}] handshake OK again, toast throttled.`);
 								}
 								settle(true, 'handshake OK');
 							}
@@ -473,21 +600,19 @@ function startHeartbeat(sessionId: number): void {
 						heartbeatPending = false;
 						return;
 					}
-					console.warn('[API-Gateway] Heartbeat timeout, reconnecting...');
+					console.warn(`[API-Gateway][${INSTANCE_ID}] Heartbeat timeout, reconnecting...`);
 					cancelConnectionFlow(false);
-					if (allowAutoReconnect()) {
-						void scanAndConnect();
-					}
+					// 先查询其他实例是否已持有连接，避免抢占
+					void reconnectAfterQuerying();
 				}
 			}, HEARTBEAT_TIMEOUT_MS);
 		}
 		catch {
 			// send 失败说明已断开
 			if (Date.now() - connectedAt >= RECONNECT_COOLDOWN_MS) {
+				console.warn(`[API-Gateway][${INSTANCE_ID}] send failed, reconnecting...`);
 				cancelConnectionFlow(false);
-				if (allowAutoReconnect()) {
-					void scanAndConnect();
-				}
+				void reconnectAfterQuerying();
 			}
 		}
 	}, HEARTBEAT_INTERVAL_MS);
