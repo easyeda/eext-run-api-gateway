@@ -32,7 +32,6 @@ const HEARTBEAT_TIMEOUT_MS = 5000;
 const CONNECTION_TIMEOUT_MS = 1500; // 每个端口的连接+握手超时
 const STORAGE_KEY_AUTO_CONNECT = 'autoConnectEnabled';
 const MBUS_TOPIC_STATUS = 'api-gateway-status';
-const MBUS_TOPIC_CONTROL = 'api-gateway-control';
 // 连接建立后的重连冷却期：期间心跳超时/send 失败不立即重连，避免多窗口实例互相抢占连接导致乒乓
 const RECONNECT_COOLDOWN_MS = 3_000;
 // 自动重连熔断：60 秒窗口内最多重连次数，超限停止自动重连（可手动菜单重连）
@@ -66,16 +65,6 @@ let reconnectWindowStart = 0; // 自动重连熔断窗口起点
 let reconnectCount = 0; // 熔断窗口内自动重连次数
 let connectedToastShown = false; // 会话内是否已弹过「已连接」Toast（进程生命周期只弹一次）
 
-interface GatewayControlRequest {
-	command: 'reconnect' | 'stop';
-}
-
-interface GatewayControlResponse {
-	handled: boolean;
-	connected: boolean;
-	windowId: string | null;
-}
-
 /**
  * 获取当前连接状态（供 messageBus RPC 调用）
  */
@@ -97,21 +86,8 @@ function ensureMessageBusServices(): void {
 	if (messageBusRegistered)
 		return;
 
+	// 状态查询服务：供多实例选举（queryAnyLeaderConnected）与「关于」菜单调用
 	eda.sys_MessageBus.rpcService(MBUS_TOPIC_STATUS, () => getConnectionStatus());
-	eda.sys_MessageBus.rpcService(MBUS_TOPIC_CONTROL, (request?: GatewayControlRequest): GatewayControlResponse => {
-		if (request?.command === 'reconnect') {
-			performReconnect();
-		}
-		else if (request?.command === 'stop') {
-			performStopConnection(false);
-		}
-
-		return {
-			handled: true,
-			connected: handshakeVerified,
-			windowId,
-		};
-	});
 
 	messageBusRegistered = true;
 }
@@ -132,7 +108,14 @@ function closeWebSocket(): void {
 	catch { /* ignore */ }
 }
 
-function cancelConnectionFlow(resetRetryCount = true): void {
+/**
+ * 取消当前连接流程（停止心跳/重试/状态复位）。
+ *
+ * @param resetRetryCount - 是否清零扫描重试计数
+ * @param closeWs - 是否关闭 WebSocket 连接；standby 实例不持有连接，
+ *                  关闭会误伤 leader 实例的共享连接，故应传 false
+ */
+function cancelConnectionFlow(resetRetryCount = true, closeWs = true): void {
 	nextConnectionSessionId();
 	isConnecting = false;
 	clearRetryTimer();
@@ -143,7 +126,9 @@ function cancelConnectionFlow(resetRetryCount = true): void {
 	if (resetRetryCount) {
 		retryCount = 0;
 	}
-	closeWebSocket();
+	if (closeWs) {
+		closeWebSocket();
+	}
 }
 
 /**
@@ -206,14 +191,8 @@ function becomeStandby(): void {
 	}
 	console.warn(`[API-Gateway][${INSTANCE_ID}] standby: another instance holds the connection.`);
 	isStandby = true;
-	nextConnectionSessionId();
-	isConnecting = false;
-	clearRetryTimer();
-	stopHeartbeat();
-	handshakeVerified = false;
-	currentPort = null;
-	windowId = null;
-	// 注意：不调用 closeWebSocket()，避免关闭 leader 实例的共享连接
+	// 复用状态复位逻辑；不 close（standby 不持有连接，避免误关 leader 的共享连接）
+	cancelConnectionFlow(false, false);
 
 	stopStandbyMonitor();
 	standbyTimer = setInterval(() => {
@@ -299,7 +278,8 @@ function performReconnect(): void {
 }
 
 function performStopConnection(showToast = true): void {
-	cancelConnectionFlow();
+	// standby 实例不持有连接，跳过 close 以免误关 leader 的共享连接
+	cancelConnectionFlow(true, !isStandby);
 	if (showToast) {
 		eda.sys_Message.showToastMessage(eda.sys_I18n.text('Connection stopped'));
 	}
@@ -331,7 +311,8 @@ export function activate(status?: 'onStartupFinished', arg?: string): void {
  */
 export function deactivate(): void {
 	stopStandbyMonitor();
-	cancelConnectionFlow(false);
+	// standby 实例不持有连接，跳过 close 以免误关 leader 的共享连接
+	cancelConnectionFlow(false, !isStandby);
 }
 
 // ─── 菜单操作 ────────────────────────────────────────────────────────
