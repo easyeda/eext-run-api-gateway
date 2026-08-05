@@ -31,6 +31,13 @@ const CONNECTION_TIMEOUT_MS = 1500; // 每个端口的连接+握手超时
 const STORAGE_KEY_AUTO_CONNECT = 'autoConnectEnabled';
 const MBUS_TOPIC_STATUS = 'api-gateway-status';
 const MBUS_TOPIC_CONTROL = 'api-gateway-control';
+// 「已连接」Toast 最小间隔：防止断线重连循环时反复弹窗
+const CONNECTED_TOAST_MIN_INTERVAL_MS = 10_000;
+// 连接建立后的重连冷却期：期间心跳超时/send 失败不立即重连，避免多窗口实例互相抢占连接导致乒乓
+const RECONNECT_COOLDOWN_MS = 3_000;
+// 自动重连熔断：60 秒窗口内最多重连次数，超限停止自动重连（可手动菜单重连）
+const RECONNECT_WINDOW_MS = 60_000;
+const MAX_RECONNECT_PER_WINDOW = 5;
 
 // ─── 状态 ───────────────────────────────────────────────────────────
 let currentPort: number | null = null;
@@ -45,6 +52,10 @@ let isConnecting = false;
 let connectionSessionId = 0;
 let messageBusRegistered = false;
 let lastReconnectAt = 0; // 上次执行重连的时间戳（防重入，毫秒）
+let lastConnectedToastAt = 0; // 上次弹「已连接」Toast 的时间戳
+let connectedAt = 0; // 当前连接建立的时间戳
+let reconnectWindowStart = 0; // 自动重连熔断窗口起点
+let reconnectCount = 0; // 熔断窗口内自动重连次数
 
 interface GatewayControlRequest {
 	command: 'reconnect' | 'stop';
@@ -124,6 +135,26 @@ function cancelConnectionFlow(resetRetryCount = true): void {
 		retryCount = 0;
 	}
 	closeWebSocket();
+}
+
+/**
+ * 自动重连熔断：60 秒窗口内最多自动重连 MAX_RECONNECT_PER_WINDOW 次。
+ * 连接反复断开（如多窗口实例抢占同一 Bridge Server 连接）时，防止无限重连循环。
+ *
+ * @returns true = 允许执行自动重连；false = 已超限，停止自动重连
+ */
+function allowAutoReconnect(): boolean {
+	const now = Date.now();
+	if (now - reconnectWindowStart > RECONNECT_WINDOW_MS) {
+		reconnectWindowStart = now;
+		reconnectCount = 0;
+	}
+	if (reconnectCount >= MAX_RECONNECT_PER_WINDOW) {
+		console.warn(`[API-Gateway] Too many reconnects in ${RECONNECT_WINDOW_MS / 1000}s window, auto-reconnect paused.`);
+		return false;
+	}
+	reconnectCount += 1;
+	return true;
 }
 
 /**
@@ -357,8 +388,14 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 
 						// 握手验证
 						if (msg.type === 'handshake') {
+							// 同一连接上重复/残留的 handshake 忽略，防止重复注册与重复弹窗
+							if (settled) {
+								return;
+							}
+
 							if (msg.service === SERVICE_ID) {
 								handshakeVerified = true;
+								connectedAt = Date.now();
 								// 生成窗口ID并注册到bridge
 								windowId = crypto.randomUUID();
 								eda.sys_WebSocket.send(WS_ID, JSON.stringify({
@@ -366,9 +403,14 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 									windowId,
 									timestamp: Date.now(),
 								}));
-								eda.sys_Message.showToastMessage(
-									`${eda.sys_I18n.text('Bridge connected (port ', undefined, undefined, String(port))})`,
-								);
+								// 节流：断线重连循环时避免反复弹「已连接」Toast
+								const now = Date.now();
+								if (now - lastConnectedToastAt >= CONNECTED_TOAST_MIN_INTERVAL_MS) {
+									lastConnectedToastAt = now;
+									eda.sys_Message.showToastMessage(
+										`${eda.sys_I18n.text('Bridge connected (port ', undefined, undefined, String(port))})`,
+									);
+								}
 								settle(true, 'handshake OK');
 							}
 							else {
@@ -426,16 +468,27 @@ function startHeartbeat(sessionId: number): void {
 				}
 
 				if (heartbeatPending) {
+					// 冷却期：连接刚建立不重连，避免多窗口实例抢占连接导致乒乓循环
+					if (Date.now() - connectedAt < RECONNECT_COOLDOWN_MS) {
+						heartbeatPending = false;
+						return;
+					}
 					console.warn('[API-Gateway] Heartbeat timeout, reconnecting...');
-					cancelConnectionFlow();
-					void scanAndConnect();
+					cancelConnectionFlow(false);
+					if (allowAutoReconnect()) {
+						void scanAndConnect();
+					}
 				}
 			}, HEARTBEAT_TIMEOUT_MS);
 		}
 		catch {
 			// send 失败说明已断开
-			cancelConnectionFlow();
-			void scanAndConnect();
+			if (Date.now() - connectedAt >= RECONNECT_COOLDOWN_MS) {
+				cancelConnectionFlow(false);
+				if (allowAutoReconnect()) {
+					void scanAndConnect();
+				}
+			}
 		}
 	}, HEARTBEAT_INTERVAL_MS);
 }
