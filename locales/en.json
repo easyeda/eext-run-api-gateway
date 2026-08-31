@@ -5,9 +5,9 @@
 	"Disconnected": "Disconnected",
 	"Reconnecting...": "Reconnecting...",
 	"Bridge not found, retrying in ": "Bridge not found, retrying in ${1}s",
+	"Bridge still not found": "Bridge still not found. Make sure the bridge server is running (ports 49620-49629). Retrying.",
 	"Bridge connected (port ": "Bridge connected (port ${1}",
 	"Auto-Connect enabled": "Auto-Connect enabled",
 	"Auto-Connect disabled": "Auto-Connect disabled",
-	"Connection stopped": "Connection stopped",
-	"Max retries reached": "Max retries reached"
+	"Connection stopped": "Connection stopped"
 }
