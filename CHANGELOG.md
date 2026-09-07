@@ -1,3 +1,14 @@
+# 1.0.6
+
+1. 拆分文档为 README.md / README.en.md / FAQ.md / FAQ.en.md，README 只留快速路径，FAQ 留所有排查细节
+2. README 新增「让 AI Agent 一句话代为安装 easyeda-api Skill」入口（含 easyeda-api-skill GitHub 链接）
+3. README 新增手动下载 zip 安装方式（备用入口）
+4. README 工具列表扩展：增加 Cursor / Cline / Continue / Windsurf / WorkBuddy / Trae
+5. README 去除硬编码 OpenCode，第 2、4 步按工具类型分组列出安装/启动方式
+6. 快速开始第 8 步示例从「嘉立创EDA，启动！」改为可操作的 `/easyeda-api skill` 调用示例
+7. FAQ § 5.1 收录 PowerShell / Windows cmd / macOS-Linux 三种命令行安装命令（原 README 命令迁入）
+8. FAQ § 11 新增 11.7 网络代理与 11.8 端口冲突排查
+
 # 1.0.5
 
 1. 增加 cmd 命令的文档
