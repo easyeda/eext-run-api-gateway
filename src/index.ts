@@ -31,6 +31,7 @@ const CONNECTION_TIMEOUT_MS = 1500; // 每个端口的连接+握手超时
 const STORAGE_KEY_AUTO_CONNECT = 'autoConnectEnabled';
 const MBUS_TOPIC_STATUS = 'api-gateway-status';
 const MBUS_TOPIC_CONTROL = 'api-gateway-control';
+const ROUTING_WARNING_AFTER_MS = 30_000;
 
 // ─── 状态 ───────────────────────────────────────────────────────────
 let currentPort: number | null = null;
@@ -44,6 +45,9 @@ let windowId: string | null = null; // 窗口唯一标识符
 let isConnecting = false;
 let connectionSessionId = 0;
 let messageBusRegistered = false;
+let activeRoutingId: string | null = null;
+let lastRoutingStatus = 'No routing task';
+let routingStartedAt = 0;
 
 interface GatewayControlRequest {
 	command: 'reconnect' | 'stop';
@@ -77,6 +81,7 @@ function ensureMessageBusServices(): void {
 		return;
 
 	eda.sys_MessageBus.rpcService(MBUS_TOPIC_STATUS, () => getConnectionStatus());
+	eda.sys_MessageBus.rpcService('api-gateway-routing-status', () => activeRoutingId ? `${lastRoutingStatus}\nElapsed: ${Date.now() - routingStartedAt} ms` : lastRoutingStatus);
 	eda.sys_MessageBus.rpcService(MBUS_TOPIC_CONTROL, (request?: GatewayControlRequest): GatewayControlResponse => {
 		if (request?.command === 'reconnect') {
 			performReconnect();
@@ -244,6 +249,11 @@ export function stopConnection(): void {
 	void dispatchControlCommand('stop');
 }
 
+export async function routingStatus(): Promise<void> {
+	const status = await eda.sys_MessageBus.rpcCall('api-gateway-routing-status', undefined, 500);
+	eda.sys_Dialog.showInformationMessage(String(status), 'Routing Task');
+}
+
 // ─── 端口扫描与连接 ──────────────────────────────────────────────────
 
 /**
@@ -363,6 +373,7 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 								eda.sys_WebSocket.send(WS_ID, JSON.stringify({
 									type: 'register',
 									windowId,
+									capabilities: ['execution-tasks-v1', 'routing-v1'],
 									timestamp: Date.now(),
 								}));
 								eda.sys_Message.showToastMessage(
@@ -469,13 +480,145 @@ function clearRetryTimer(): void {
 // ─── 消息处理 ────────────────────────────────────────────────────────
 
 interface BridgeMessage {
-	type: 'execute' | 'ping' | 'pong' | 'handshake' | 'result' | 'error';
+	type: 'execute' | 'routing' | 'ping' | 'pong' | 'handshake' | 'result' | 'error';
 	id?: string;
 	code?: string;
 	service?: string;
 	result?: unknown;
 	error?: string;
 	timestamp?: number;
+	routing?: RoutingRequest;
+}
+
+interface RoutingRequest {
+	operation: 'autoRouting' | 'clearRouting';
+	documentUuid: string;
+	props?: IPCB_AutoRoutingProps;
+	clearType?: 'all' | 'net' | 'connection';
+}
+
+interface ErrorDetails {
+	name: string;
+	message: string;
+	stack?: string;
+	code?: unknown;
+	details?: unknown;
+	cause?: ErrorDetails;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+function diagnosticValue(value: unknown): unknown {
+	const seen = new WeakSet<object>();
+	try {
+		return JSON.parse(JSON.stringify(value, (_key, item: unknown) => {
+			if (typeof item === 'bigint')
+				return String(item);
+			if (isRecord(item)) {
+				if (seen.has(item))
+					return '[Circular]';
+				seen.add(item);
+				if (item instanceof Error || Object.prototype.toString.call(item) === '[object Error]')
+					return { name: item.name, message: item.message, stack: item.stack, cause: item.cause };
+			}
+			return item;
+		}) ?? 'null');
+	}
+	catch {
+		return String(value);
+	}
+}
+
+function describeError(error: unknown, depth = 0): ErrorDetails {
+	const item = isRecord(error) ? error : {};
+	return {
+		name: typeof item.name === 'string' ? item.name : 'Error',
+		message: typeof item.message === 'string' ? item.message : String(error),
+		stack: typeof item.stack === 'string' ? item.stack : undefined,
+		code: diagnosticValue(item.code),
+		details: diagnosticValue(item.details),
+		cause: item.cause !== undefined && depth < 3 ? describeError(item.cause, depth + 1) : undefined,
+	};
+}
+
+function routingError(code: string, message: string, details?: unknown): Error {
+	return Object.assign(new Error(message), { code, details });
+}
+
+function validateRoutingProps(props: unknown): asserts props is IPCB_AutoRoutingProps | undefined {
+	if (props === undefined)
+		return;
+	if (!isRecord(props) || Array.isArray(props))
+		throw routingError('INVALID_ROUTING_PROPS', 'props must be an object');
+	const supported = ['RoutingNets', 'ignoreNets', 'layers', 'cornerStyle', 'optimization', 'existingPrimitiveMode'];
+	const unknown = Object.keys(props).filter(key => !supported.includes(key));
+	if (unknown.length)
+		throw routingError('INVALID_ROUTING_PROPS', `Unknown routing properties: ${unknown.join(', ')}. Use RoutingNets for network names.`);
+	const names = (value: unknown): boolean => Array.isArray(value) && value.every(name => typeof name === 'string' && name.trim().length > 0);
+	if (props.RoutingNets !== undefined && props.RoutingNets !== 'selected' && props.RoutingNets !== 'selectedComponents' && !names(props.RoutingNets))
+		throw routingError('INVALID_ROUTING_PROPS', 'RoutingNets must be an array of network names, selected, or selectedComponents');
+	if (props.ignoreNets !== undefined && !names(props.ignoreNets))
+		throw routingError('INVALID_ROUTING_PROPS', 'ignoreNets must be an array of network names');
+	if (props.layers !== undefined && (!Array.isArray(props.layers) || !props.layers.length || !props.layers.every(layer => layer === EPCB_LayerId.TOP || layer === EPCB_LayerId.BOTTOM || (Number.isInteger(layer) && layer >= EPCB_LayerId.INNER_1 && layer <= EPCB_LayerId.INNER_30))))
+		throw routingError('INVALID_ROUTING_PROPS', 'layers must contain copper layer IDs');
+	if (props.cornerStyle !== undefined && props.cornerStyle !== EPCB_AutoRoutingCornerStyle.DEGREE_45 && props.cornerStyle !== EPCB_AutoRoutingCornerStyle.DEGREE_90)
+		throw routingError('INVALID_ROUTING_PROPS', 'Invalid cornerStyle');
+	if (props.optimization !== undefined && props.optimization !== EPCB_AutoRoutingOptimization.COMPLETION && props.optimization !== EPCB_AutoRoutingOptimization.FASTER)
+		throw routingError('INVALID_ROUTING_PROPS', 'Invalid optimization');
+	if (props.existingPrimitiveMode !== undefined && props.existingPrimitiveMode !== EPCB_AutoRoutingExistingPrimitiveMode.KEEP && props.existingPrimitiveMode !== EPCB_AutoRoutingExistingPrimitiveMode.REMOVE)
+		throw routingError('INVALID_ROUTING_PROPS', 'Invalid existingPrimitiveMode');
+}
+
+async function runRouting(request: RoutingRequest, report: (phase: string) => void): Promise<unknown> {
+	if (!request || !['autoRouting', 'clearRouting'].includes(request.operation) || typeof request.documentUuid !== 'string' || !request.documentUuid.trim())
+		throw routingError('INVALID_ROUTING_REQUEST', 'A routing operation and documentUuid are required');
+	validateRoutingProps(request.props);
+	report('preflight');
+	const document = await eda.dmt_SelectControl.getCurrentDocumentInfo();
+	if (document?.documentType !== EDMT_EditorDocumentType.PCB || document.uuid !== request.documentUuid)
+		throw routingError('WRONG_DOCUMENT', 'The requested PCB must have input focus', { expected: request.documentUuid, actual: document });
+	if (typeof eda.pcb_Document[request.operation] !== 'function')
+		throw routingError('API_UNAVAILABLE', `${request.operation} is unavailable in this EDA version`, { version: eda.sys_Environment.getEditorCurrentVersion() });
+	const needsSelection = request.operation === 'clearRouting'
+		? request.clearType === 'net' || request.clearType === 'connection'
+		: request.props?.RoutingNets === 'selected' || request.props?.RoutingNets === 'selectedComponents';
+	if (needsSelection && !(await eda.pcb_SelectControl.getAllSelectedPrimitives_PrimitiveId()).length)
+		throw routingError('EMPTY_SELECTION', 'This routing operation requires selected PCB primitives');
+	if (request.operation === 'clearRouting') {
+		if (!request.clearType || !['all', 'net', 'connection'].includes(request.clearType))
+			throw routingError('INVALID_ROUTING_PROPS', 'clearType must explicitly be all, net, or connection');
+		const current = await eda.dmt_SelectControl.getCurrentDocumentInfo();
+		if (current?.uuid !== request.documentUuid || current.documentType !== EDMT_EditorDocumentType.PCB)
+			throw routingError('WRONG_DOCUMENT', 'PCB focus changed during routing preflight');
+		report('clearing');
+		const cleared = await eda.pcb_Document.clearRouting(request.clearType);
+		if (cleared !== true)
+			throw routingError('CLEAR_ROUTING_FAILED', 'EDA did not confirm clearing the routing', { result: cleared });
+		return { outcome: 'complete', cleared };
+	}
+	if (Array.isArray(request.props?.RoutingNets) && request.props.RoutingNets.length) {
+		const nets = await eda.pcb_Net.getAllNetsName();
+		const missing = request.props.RoutingNets.filter(net => !nets.includes(net));
+		if (missing.length)
+			throw routingError('UNKNOWN_NETS', 'Requested networks are absent from the PCB', { missing });
+	}
+	// Preflight awaits must not leave the operation targeting a newly focused document.
+	const current = await eda.dmt_SelectControl.getCurrentDocumentInfo();
+	if (current?.uuid !== request.documentUuid || current.documentType !== EDMT_EditorDocumentType.PCB)
+		throw routingError('WRONG_DOCUMENT', 'PCB focus changed during routing preflight');
+	report('routing');
+	const result = await eda.pcb_Document.autoRouting(request.props);
+	if (!result || typeof result.success !== 'boolean')
+		throw routingError('INVALID_ROUTING_RESULT', 'EDA returned an unrecognized routing result', { result });
+	if (!result.success)
+		throw routingError('ROUTING_NOT_STARTED', 'EDA reported that automatic routing did not start successfully', { result });
+	if (!Number.isInteger(result.totalNetsCount) || result.totalNetsCount < 0 || !Number.isInteger(result.successNetsCount) || result.successNetsCount < 0 || result.successNetsCount > result.totalNetsCount || !Array.isArray(result.failedNets) || !result.failedNets.every(net => typeof net === 'string') || !Number.isFinite(result.duration) || result.duration < 0)
+		throw routingError('INVALID_ROUTING_RESULT', 'EDA returned invalid routing statistics', { result });
+	const outcome = result.failedNets.length || result.successNetsCount < result.totalNetsCount ? 'partial' : 'complete';
+	report(outcome);
+	return { ...result, outcome };
 }
 
 async function handleMessage(msg: BridgeMessage): Promise<void> {
@@ -493,28 +636,84 @@ async function handleMessage(msg: BridgeMessage): Promise<void> {
 		return;
 	}
 
-	if (msg.type === 'execute' && msg.code) {
+	if (msg.type === 'execute' || msg.type === 'routing') {
+		const sessionId = connectionSessionId;
+		const taskWindowId = windowId;
+		const startedAt = Date.now();
+		let phase = 'starting';
+		let ownsRouting = false;
+		let warningTimer: ReturnType<typeof setTimeout> | undefined;
+		const send = (message: Record<string, unknown>): void => {
+			if (!isConnectionSessionActive(sessionId) || windowId !== taskWindowId)
+				return;
+			eda.sys_WebSocket.send(WS_ID, JSON.stringify({ ...message, id: msg.id, timestamp: Date.now() }));
+		};
+		const report = (nextPhase: string): void => {
+			phase = nextPhase;
+			if (ownsRouting)
+				lastRoutingStatus = `${msg.id}\n${phase}\n${msg.routing?.documentUuid}`;
+			send({ type: 'progress', phase, progress: null, elapsedMs: Date.now() - startedAt });
+		};
 		try {
-			// 使用 AsyncFunction 执行代码，允许 await
-
-			const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-			const fn = new AsyncFunction('eda', msg.code);
-			const result = await fn(eda);
-
-			eda.sys_WebSocket.send(WS_ID, JSON.stringify({
-				type: 'result',
-				id: msg.id,
-				result: result !== undefined ? result : null,
-				timestamp: Date.now(),
-			}));
+			let result: unknown;
+			if (msg.type === 'routing') {
+				if (!msg.id || !msg.routing)
+					throw routingError('INVALID_ROUTING_REQUEST', 'Missing task ID or routing request');
+				if (activeRoutingId)
+					throw routingError('ROUTING_BUSY', 'Another routing operation is still running in this window', { taskId: activeRoutingId });
+				activeRoutingId = msg.id;
+				routingStartedAt = startedAt;
+				ownsRouting = true;
+				warningTimer = setTimeout(() => {
+					const warning = 'Native routing call has not returned after 30 seconds. It was not cancelled; do not resubmit it.';
+					lastRoutingStatus += `\n${warning}`;
+					try {
+						send({ type: 'progress', phase, progress: null, warning, elapsedMs: Date.now() - startedAt });
+					}
+					catch (error: unknown) {
+						console.warn('[API-Gateway] Could not publish routing warning:', error);
+					}
+				}, ROUTING_WARNING_AFTER_MS);
+				result = await runRouting(msg.routing, report);
+			}
+			else {
+				if (typeof msg.code !== 'string' || !msg.code.trim())
+					throw routingError('INVALID_CODE', 'Missing executable code');
+				report('executing');
+				const taskConsole = { ...console };
+				for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const) {
+					taskConsole[level] = (...args: unknown[]): void => {
+						send({ type: 'log', level, args: diagnosticValue(args) });
+					};
+				}
+				const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+				const fn = new AsyncFunction('eda', 'console', 'execution', 'EDMT_EditorDocumentType', 'EPCB_LayerId', 'EPCB_AutoRoutingCornerStyle', 'EPCB_AutoRoutingOptimization', 'EPCB_AutoRoutingExistingPrimitiveMode', msg.code);
+				result = await fn(
+					eda,
+					taskConsole,
+					{ reportProgress: report },
+					typeof EDMT_EditorDocumentType === 'undefined' ? undefined : EDMT_EditorDocumentType,
+					typeof EPCB_LayerId === 'undefined' ? undefined : EPCB_LayerId,
+					typeof EPCB_AutoRoutingCornerStyle === 'undefined' ? undefined : EPCB_AutoRoutingCornerStyle,
+					typeof EPCB_AutoRoutingOptimization === 'undefined' ? undefined : EPCB_AutoRoutingOptimization,
+					typeof EPCB_AutoRoutingExistingPrimitiveMode === 'undefined' ? undefined : EPCB_AutoRoutingExistingPrimitiveMode,
+				);
+			}
+			phase = 'serializing';
+			send({ type: 'result', result: result !== undefined ? result : null });
+			if (ownsRouting)
+				lastRoutingStatus = `${msg.id}\nCompleted in ${Date.now() - startedAt} ms\n${JSON.stringify(result)}`;
 		}
 		catch (err: unknown) {
-			eda.sys_WebSocket.send(WS_ID, JSON.stringify({
-				type: 'error',
-				id: msg.id,
-				error: err instanceof Error ? err.message : String(err),
-				timestamp: Date.now(),
-			}));
+			const errorDetails = { ...describeError(err), phase };
+			if (ownsRouting)
+				lastRoutingStatus = `${msg.id}\nFailed after ${Date.now() - startedAt} ms\n${JSON.stringify(errorDetails)}`;
+			send({ type: 'error', error: errorDetails.message, errorDetails });
+		}
+		finally {
+			clearTimeout(warningTimer);
+			if (ownsRouting)
+				activeRoutingId = null;
 		}
 	}
 }
