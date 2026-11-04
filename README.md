@@ -1,6 +1,6 @@
 # Run API Gateway
 
-[English](https://github.com/easyeda/eext-run-api-gateway/README.en.md) · [FAQ 简体中文](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.md) · [FAQ English](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.en.md)
+[English](https://github.com/easyeda/eext-run-api-gateway/blob/main/README.en.md) · [FAQ 简体中文](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.md) · [FAQ English](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.en.md)
 
 嘉立创EDA 专业版扩展 — 为 AI 编程工具（OpenCode、Claude Code、Cursor、Cline、Continue、Windsurf、WorkBuddy、QwenCode、KimiCode、Trae 等）提供 WebSocket API 网关桥接服务。
 
@@ -48,6 +48,7 @@
     > 请帮我从 <https://github.com/easyeda/easyeda-api-skill> 下载并安装 easyeda-api skill
 
   **手动下载并解压**：如果手边没有 AI Agent，可以下载 zip 后解压到全局 Skill 目录：
+  - 下载压缩包：：[easyeda-api-skill.zip](https://github.com/easyeda/easyeda-api-skill/archive/refs/heads/main.zip)
   - 解压目标：`~/.config/opencode/skills/easyeda-api/`（OpenCode 路径；其他工具请参考各自文档的全局 skills 目录）
   - 详细步骤见 [FAQ.md § 5.2](https://github.com/easyeda/eext-run-api-gateway/FAQ.md#52-如果命令安装失败如何手动下载并安装-skill)
 
@@ -78,8 +79,8 @@
 
 连接失败、命令提示词、各组件职责、开发者本地调试模式等内容请查阅：
 
-- [FAQ 简体中文](./FAQ.md) — 详细的环境准备、安装步骤、故障排查与示例
-- [FAQ English](./FAQ.en.md) — Detailed setup, troubleshooting and examples
+- [FAQ 简体中文](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.md) — 详细的环境准备、安装步骤、故障排查与示例
+- [FAQ English](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.en.md) — Detailed setup, troubleshooting and examples
 
 也可直接访问 GitHub 在线版本：
 

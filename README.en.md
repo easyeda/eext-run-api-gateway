@@ -1,6 +1,6 @@
 # Run API Gateway
 
-[简体中文](./README.md) · [FAQ 简体中文](./FAQ.md) · [FAQ English](./FAQ.en.md)
+[简体中文](https://github.com/easyeda/eext-run-api-gateway/blob/main/README.md) · [FAQ 简体中文](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.md) · [FAQ English](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.en.md)
 
 EasyEDA Pro extension — provides a WebSocket API gateway bridge for AI coding tools (OpenCode, Claude Code, Cursor, Cline, Continue, Windsurf, WorkBuddy, QwenCode, KimiCode, Trae, etc.).
 
@@ -48,19 +48,19 @@ If you are already familiar with the terminal, Node.js, and the EasyEDA extensio
     > Please download and install the easyeda-api skill from <https://github.com/easyeda/easyeda-api-skill>.
 
   **Manual download and unzip**: if you don't have an AI Agent at hand, download the zip and unzip it into the global Skill directory:
-  - Download: <https://image.lceda.cn/files/easyeda-api-skill.zip>
+  - Download zip：[easyeda-api-skill.zip](https://github.com/easyeda/easyeda-api-skill/archive/refs/heads/main.zip)
   - Unzip target: `~/.config/opencode/skills/easyeda-api/` (OpenCode path; for other tools, see your tool's docs for its global skills directory)
-  - For full steps, see [FAQ.en.md § 5.2](./FAQ.en.md#52-manual-install-if-the-command-fails)
+  - For full steps, see [FAQ.en.md § 5.2](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.en.md#52-manual-install-if-the-command-fails)
 
   Advanced users can also use the `npx clawhub@latest install ...` command-line method — see [FAQ.en.md § 5.1](./FAQ.en.md#51-one-line-install-via-clawhub).
-4. Start your AI tool:
+1. Start your AI tool:
   - **OpenCode / Claude Code / QwenCode / KimiCode**: in the terminal, run `opencode` / `claude` / `qwencode` / `kimi` (or the matching command)
   - **Cursor / Windsurf / Trae / WorkBuddy**: double-click the desktop icon
   - **Cline / Continue**: open VS Code
-5. On first use, follow the in-tool prompts to log in or pick a model. In OpenCode you can run `/connect` to choose a free model.
-6. Install the **Run API Gateway** extension in EasyEDA Pro, and make sure both **Allow External Interaction** and **Show in Top Menu** are enabled in the Extension Manager.
-7. Open EasyEDA and confirm the **API Gateway** menu appears at the top.
-8. Return to your AI tool and trigger it with `/easyeda-api skill ...`, for example:
+2. On first use, follow the in-tool prompts to log in or pick a model. In OpenCode you can run `/connect` to choose a free model.
+3. Install the **Run API Gateway** extension in EasyEDA Pro, and make sure both **Allow External Interaction** and **Show in Top Menu** are enabled in the Extension Manager.
+4. Open EasyEDA and confirm the **API Gateway** menu appears at the top.
+5. Return to your AI tool and trigger it with `/easyeda-api skill ...`, for example:
   - `Use /easyeda-api skill to inspect my current schematic.`
   - `Use /easyeda-api skill to draw a NE555 minimal circuit.`
 
@@ -79,8 +79,8 @@ If this is your first time with these tools, please read the "From-Scratch Tutor
 
 For connection failures, prompt examples, component responsibilities, and developer-mode debugging, see:
 
-- [FAQ 简体中文](./FAQ.md) — Detailed environment prep, installation steps, troubleshooting and examples
-- [FAQ English](./FAQ.en.md) — Detailed setup, troubleshooting and examples
+- [FAQ 简体中文](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.md) — Detailed environment prep, installation steps, troubleshooting and examples
+- [FAQ English](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.en.md) — Detailed setup, troubleshooting and examples
 
 You can also read them directly on GitHub:
 
