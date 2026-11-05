@@ -1,3 +1,8 @@
+# 1.0.7 2026.11.05
+
+1. README补充完整github链接
+
+
 # 1.0.6
 
 1. 拆分文档为 README.md / README.en.md / FAQ.md / FAQ.en.md，README 只留快速路径，FAQ 留所有排查细节
