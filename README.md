@@ -1,6 +1,6 @@
 # Run API Gateway
 
-[English](./README.en.md) · [FAQ 简体中文](./FAQ.md) · [FAQ English](./FAQ.en.md)
+[English](https://github.com/easyeda/eext-run-api-gateway/blob/main/README.en.md) · [FAQ 简体中文](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.md) · [FAQ English](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.en.md)
 
 嘉立创EDA 专业版扩展 — 为 AI 编程工具（OpenCode、Claude Code、Cursor、Cline、Continue、Windsurf、WorkBuddy、QwenCode、KimiCode、Trae 等）提供 WebSocket API 网关桥接服务。
 
@@ -48,23 +48,23 @@
     > 请帮我从 <https://github.com/easyeda/easyeda-api-skill> 下载并安装 easyeda-api skill
 
   **手动下载并解压**：如果手边没有 AI Agent，可以下载 zip 后解压到全局 Skill 目录：
-  - 下载地址：<https://image.lceda.cn/files/easyeda-api-skill.zip>
+  - 下载压缩包：：[easyeda-api-skill.zip](https://github.com/easyeda/easyeda-api-skill/archive/refs/heads/main.zip)
   - 解压目标：`~/.config/opencode/skills/easyeda-api/`（OpenCode 路径；其他工具请参考各自文档的全局 skills 目录）
-  - 详细步骤见 [FAQ.md § 5.2](./FAQ.md#52-如果命令安装失败如何手动下载并安装-skill)
+  - 详细步骤见 [FAQ.md § 5.2](https://github.com/easyeda/eext-run-api-gateway/FAQ.md#52-如果命令安装失败如何手动下载并安装-skill)
 
-  进阶用户也可以使用 `npx clawhub@latest install ...` 的命令行方式，详见 [FAQ.md § 5.1](./FAQ.md#51-从-clawhub-单行命令安装)。
-4. 启动 AI 工具：
+  进阶用户也可以使用 `npx clawhub@latest install ...` 的命令行方式，详见 [FAQ.md § 5.1](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.md#51-从-clawhub-单行命令安装)。
+1. 启动 AI 工具：
   - **OpenCode / Claude Code / QwenCode / KimiCode**：在终端运行 `opencode` / `claude` / `qwencode` / `kimi`（或对应命令）
   - **Cursor / Windsurf / Trae / WorkBuddy**：双击桌面图标启动
   - **Cline / Continue**：打开 VS Code
-5. 首次使用时按工具提示登录或选择模型，OpenCode 中可执行 `/connect` 选择免费模型
+2. 首次使用时按工具提示登录或选择模型，OpenCode 中可执行 `/connect` 选择免费模型
 6. 在嘉立创EDA 专业版安装 **Run API Gateway** 扩展，并在扩展管理器中勾选 **允许外部交互** 与 **显示在顶部菜单**
 7. 打开嘉立创EDA，看到顶部 **API Gateway** 菜单即可
 8. 回到 AI 工具，使用 `/easyeda-api skill` 让它帮你做事，例如：
   - `使用 /easyeda-api skill 帮我检查当前原理图`
   - `使用 /easyeda-api skill 帮我画一个 NE555 最小系统`
 
-如果你是首次接触这些工具，请阅读 [FAQ.md](./FAQ.md) 中的「从零开始使用教程」章节，里面有完整的逐步说明。
+如果你是首次接触这些工具，请阅读 [FAQ.md](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.md) 中的「从零开始使用教程」章节，里面有完整的逐步说明。
 
 ## 菜单操作
 
@@ -79,8 +79,8 @@
 
 连接失败、命令提示词、各组件职责、开发者本地调试模式等内容请查阅：
 
-- [FAQ 简体中文](./FAQ.md) — 详细的环境准备、安装步骤、故障排查与示例
-- [FAQ English](./FAQ.en.md) — Detailed setup, troubleshooting and examples
+- [FAQ 简体中文](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.md) — 详细的环境准备、安装步骤、故障排查与示例
+- [FAQ English](https://github.com/easyeda/eext-run-api-gateway/blob/main/FAQ.en.md) — Detailed setup, troubleshooting and examples
 
 也可直接访问 GitHub 在线版本：
 
