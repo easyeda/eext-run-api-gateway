@@ -146,7 +146,7 @@ The extension runs inside EasyEDA's browser-like environment. Key globals:
 
 - `activate()` → called on startup (`onStartupFinished` event)
 - `deactivate()` → called on extension unload (cleanup)
-- Menu functions (`reconnect`, `about`) → exported and registered via `extension.json`
+- Menu functions (`reconnect`, `stopConnection`, `toggleAutoConnect`, `about`) → exported and registered via `extension.json`
 
 ---
 
@@ -157,6 +157,7 @@ The extension runs inside EasyEDA's browser-like environment. Key globals:
 3. **Do not use browser `fetch` for HTTP** — EasyEDA webview enforces mixed-content blocking. Use WebSocket only.
 4. **JSON import must use namespace import** — `import * as config from '../extension.json'` (not default import).
 5. **Pre-commit lint is enforced** — `npm run fix` before committing to avoid hook failures.
+6. **Never reuse a WebSocket ID across connection attempts** — `sys_WebSocket.register` ignores new address/callback params while a connection with the same ID is still active. Use a fresh ID per attempt (`ai-bridge-<seq>`) and close each failed attempt; otherwise port scanning can silently become a no-op.
 
 ---
 

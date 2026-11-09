@@ -8,7 +8,7 @@ EasyEDA Pro extension — provides a WebSocket API gateway bridge for AI coding 
 
 - 🔌 **Auto-Connect** — On startup, automatically scans port range 49620-49629 to discover and connect to the Bridge Server.
 - 🤝 **Handshake Verification** — Verifies the service identity through a WebSocket handshake (`easyeda-bridge`).
-- 🔄 **Auto-Reconnect** — Heartbeat detection + automatic port re-scan on disconnect.
+- 🔄 **Auto-Reconnect** — Heartbeat detection + automatic port re-scan on disconnect, retrying indefinitely with exponential backoff (3s→30s) so a late-starting or restarted Bridge Server recovers on its own.
 - 🤖 **Code Execution** — Receives code requests from AI, executes them inside the EDA environment, and returns results.
 
 ## Architecture
@@ -70,10 +70,10 @@ If this is your first time with these tools, please read the "From-Scratch Tutor
 
 | Menu Item | Description |
 |-----------|-------------|
-| **Reconnect** | Manually re-scan ports and connect to the Bridge Server. |
-| **Stop Connection** | Disconnect the current session. |
-| **Toggle Auto-Connect Status** | Toggle the auto-connect switch. |
-| **About...** | Show the extension version and current connection status. |
+| **Reconnect** | Immediately re-scan ports and connect; also resumes a session stopped via **Stop Connection**. |
+| **Stop Connection** | Disconnect and stop automatic retries until you reconnect manually or re-enable auto-connect. |
+| **Toggle Auto-Connect Status** | Toggle auto-connect, effective immediately: disabling also disconnects; enabling immediately tries to connect. |
+| **About...** | Show the version and connection status (including stopped/retry count). |
 
 ## Advanced Topics
 

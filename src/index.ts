@@ -25,7 +25,7 @@ const PORT_END = 49629;
 const SERVICE_ID = 'easyeda-bridge';
 const RETRY_DELAY_MS = 3000;
 const RETRY_DELAY_MAX_MS = 30000;
-// 退避到上限后提醒用户去检查桥接服务本身，只提醒一次。
+// 每轮退避计数首次达到该值时提醒用户去检查桥接服务本身。
 const RETRY_HINT_AT = 5;
 const HEARTBEAT_INTERVAL_MS = 15000;
 // 心跳 tick 迟到超过这个时长，说明定时器被浏览器节流、或者主线程正被一段长任务
@@ -83,6 +83,9 @@ let outbox: Array<OutboxEntry> = [];
 let lastInboundAt = 0;
 // 上一次心跳 tick 的时刻，用来识别定时器是否被浏览器节流。
 let lastHeartbeatTickAt = 0;
+// 最近一次「迟到 tick 豁免」的时刻，只用于心跳的沉默判定。
+// 与 lastInboundAt 分开，避免豁免抹掉可见性自愈所需的真实沉默时间。
+let lastGraceTickAt = 0;
 
 type SendOutcome = 'sent' | 'queued' | 'failed';
 
@@ -564,6 +567,9 @@ async function scanAndConnect(): Promise<void> {
 function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 	return new Promise((resolve) => {
 		let settled = false;
+		// 超时/失败后底层连接仍可能把已排队的消息送进来，用这个标记全部忽略，
+		// 否则一次迟到的 handshake 会把全局状态改成「已连接」。
+		let attemptFailed = false;
 		let timer: ReturnType<typeof setTimeout>;
 
 		const wsId = nextWsId();
@@ -578,6 +584,7 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 				activeWsId = wsId;
 			}
 			else {
+				attemptFailed = true;
 				if (activeWsId === wsId) {
 					activeWsId = null;
 				}
@@ -602,6 +609,11 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 				`ws://127.0.0.1:${port}/eda`,
 				// 收到消息的回调（在扫描阶段处理握手，后续处理业务消息）
 				async (event: MessageEvent) => {
+					// 本端口已判定失败（超时/服务不符），迟到消息不再影响全局状态
+					if (attemptFailed) {
+						return;
+					}
+
 					// 会话已被取代（用户手动重连或停止），这条连接不再属于当前流程
 					if (!isConnectionSessionActive(sessionId)) {
 						closeWebSocketById(wsId);
@@ -676,6 +688,7 @@ function startHeartbeat(sessionId: number): void {
 	const now = Date.now();
 	lastInboundAt = now;
 	lastHeartbeatTickAt = now;
+	lastGraceTickAt = now;
 
 	heartbeatTimer = setInterval(() => {
 		if (!isConnectionSessionActive(sessionId)) {
@@ -696,12 +709,14 @@ function startHeartbeat(sessionId: number): void {
 		// 判超时并重连，等于在一段长任务执行到一半时掐掉自己的连接、让这次调用
 		// 白白失败。放过这一轮，先补一次心跳，下一轮再按正常标准判断。
 		if (sinceLastTick > HEARTBEAT_TICK_LATE_MS) {
-			lastInboundAt = tickAt;
+			// 只重置沉默判定的锚点，不改写 lastInboundAt：后者要如实反映
+			// 「最后一次真正收到消息」的时刻，供可见性自愈判断。
+			lastGraceTickAt = tickAt;
 			sendHeartbeat();
 			return;
 		}
 
-		if (tickAt - lastInboundAt > HEARTBEAT_SILENCE_LIMIT_MS) {
+		if (tickAt - Math.max(lastInboundAt, lastGraceTickAt) > HEARTBEAT_SILENCE_LIMIT_MS) {
 			console.warn('[API-Gateway] Heartbeat timeout, reconnecting...');
 			reconnectAfterDrop();
 			return;
@@ -720,7 +735,12 @@ function sendHeartbeat(): void {
 	}) !== 'sent') {
 		// send 失败说明已断开
 		reconnectAfterDrop();
+		return;
 	}
+
+	// 连接仍可用：把之前 send 失败暂存的结果补发出去。否则队列只会在下一次
+	// 握手时被处理，一次短暂的发送失败会让结果一直留到 TTL 过期。
+	flushOutbox();
 }
 
 function stopHeartbeat(): void {
@@ -753,11 +773,12 @@ function clearRetryTimer(): void {
 // ─── 掉线自愈 ────────────────────────────────────────────────────────
 
 /**
- * 标签页回到前台时立刻重连。
+ * 标签页回到前台时恢复连接。
  *
  * 后台标签页的定时器会被浏览器冻结，心跳因此停摆，桥接服务那边探活失败就把
  * 这个窗口摘掉了。页面被冻结期间扩展无能为力，但重新可见是最可靠的自愈时机：
- * 此时清掉退避直接重连，用户切回来就能用，不用手动点菜单。
+ * 已断开就清掉退避直接重连；仍标记为已连接但长时间收不到消息时也立即重连，
+ * 避免顶着一个实际上已经死掉的连接继续等待。
  */
 function bindVisibilityRecovery(): void {
 	if (visibilityBound)
@@ -768,10 +789,21 @@ function bindVisibilityRecovery(): void {
 	document.addEventListener('visibilitychange', () => {
 		if (document.visibilityState !== 'visible')
 			return;
-		if (!autoConnectEnabled || manuallyStopped)
+		if (!autoConnectEnabled || manuallyStopped || isConnecting)
 			return;
-		if (handshakeVerified || isConnecting)
+
+		if (handshakeVerified) {
+			// 本地仍标记为已连接，但后台冻结期间心跳可能早已停摆、对端也已经
+			// 摘掉窗口。真实收信沉默超过掉线判定上限就重连，否则补一次心跳探测。
+			if (Date.now() - lastInboundAt > HEARTBEAT_SILENCE_LIMIT_MS) {
+				console.warn('[API-Gateway] Connection stale after tab became visible, reconnecting...');
+				reconnectAfterDrop();
+			}
+			else {
+				sendHeartbeat();
+			}
 			return;
+		}
 
 		retryCount = 0;
 		clearRetryTimer();
@@ -863,7 +895,7 @@ async function handleMessage(msg: BridgeMessage): Promise<void> {
 				id: msg.id,
 				error: err instanceof Error ? err.message : String(err),
 				timestamp: Date.now(),
-			});
+			}, true);
 		}
 	}
 }

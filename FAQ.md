@@ -281,7 +281,7 @@ npx clawhub@latest install easyeda-api --workdir "$HOME/.config/opencode" --dir 
 
 > TIP
 >
-> 如果你之前已经打开 EDA，但没有看到连接行为，或者连接已经重试 5 次后失败，可以手动点击：
+> 如果你之前已经打开 EDA，但没有看到连接行为，扩展会以 3 秒 → 30 秒的指数退避一直重试，不会自动放弃；连续重试 5 次仍未找到 Bridge Server 时会弹出一次提醒。此时也可以手动点击以下菜单立即重试：
 >
 > - **API Gateway** → **重新连接**
 
@@ -440,6 +440,8 @@ npx clawhub@latest install easyeda-api --workdir "$HOME/.config/opencode" --dir 
 
 - **API Gateway** → **重新连接**
 
+如果之前点过「停止连接」或关闭了自动连接，手动「重新连接」同样可以恢复一次连接；如果希望断线后继续自动恢复，请再点一次「切换自动连接状态」重新开启。
+
 然后再回到 OpenCode 重试一次：
 
 ```text
@@ -471,7 +473,7 @@ npx clawhub@latest install easyeda-api --workdir "$HOME/.config/opencode" --dir 
 
 ### 11.8 端口冲突
 
-如果端口 `49620-49629` 已经被其他程序占用（常见的有 IDE Live Share、调试代理、其它服务），扩展会持续扫不到 Bridge Server。
+如果端口 `49620-49629` 已经被其他程序占用（常见的有 IDE Live Share、调试代理、其它服务），扩展会一直重试却始终扫不到 Bridge Server。如果 EDA 内提示「仍未找到 Bridge 服务，请确认桥接服务已启动（端口 49620-49629），扩展会继续重试」，说明扩展仍在工作，重点排查端口占用与 Bridge Server 是否已启动。
 
 排查命令：
 

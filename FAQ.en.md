@@ -281,7 +281,7 @@ You don't need to fill in any IP or port manually — the default flow takes car
 
 > TIP
 >
-> If EDA was already open and you didn't see a connection, or it failed after 5 retries, you can trigger a manual reconnect via:
+> If EDA was already open and you didn't see a connection, the extension keeps retrying with exponential backoff (3s → 30s) and never gives up on its own; after 5 consecutive failed attempts it shows a one-time reminder. You can also trigger a manual reconnect via:
 >
 > - **API Gateway** → **Reconnect**
 
@@ -440,6 +440,8 @@ In the EDA top menu, click:
 
 - **API Gateway** → **Reconnect**
 
+If you previously used **Stop Connection** or turned auto-connect off, **Reconnect** still establishes a connection once; to keep recovering automatically after a drop, toggle auto-connect back on.
+
 Then return to OpenCode and retry:
 
 ```text
@@ -471,7 +473,7 @@ Mitigations:
 
 ### Port Conflicts
 
-If ports `49620-49629` are already in use by other software (common offenders: IDE Live Share, debug proxies, other local services), the extension will keep failing to find the Bridge Server.
+If ports `49620-49629` are already in use by other software (common offenders: IDE Live Share, debug proxies, other local services), the extension keeps retrying but will never find the Bridge Server. If EDA shows “Bridge still not found. Make sure the bridge server is running (ports 49620-49629). Retrying.”, the extension is still working — focus on port conflicts and whether the Bridge Server has started.
 
 Diagnostic commands:
 

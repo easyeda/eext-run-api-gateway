@@ -1,6 +1,6 @@
 {
 	"name": "pro-api-sdk",
-	"version": "1.3.2",
+	"version": "1.0.8",
 	"description": "嘉立创EDA & EasyEDA 专业版扩展 API 开发工具",
 	"author": "JLCEDA <support@lceda.cn>",
 	"license": "Apache-2.0",
