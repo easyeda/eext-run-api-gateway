@@ -9,5 +9,6 @@
 	"Bridge connected (port ": "Bridge 已连接（端口 ${1}",
 	"Auto-Connect enabled": "已启用自动连接",
 	"Auto-Connect disabled": "已禁用自动连接",
-	"Connection stopped": "已停止连接"
+	"Connection stopped": "已停止连接",
+	"External interaction required": "请开启允许外部交互后重试。在「高级 - 扩展管理器 - Run API Gateway - 配置 - 允许外部交互」"
 }

@@ -19,7 +19,11 @@
 import * as extensionConfig from '../extension.json';
 
 // ─── 配置 ───────────────────────────────────────────────────────────
-const WS_ID_PREFIX = 'ai-bridge';
+// 每次扩展激活都换一个前缀：模块级序号在 reload/热更新后会从 1 重新开始，
+// 若旧连接还没被运行时清掉，新实例的 ai-bridge-1 会撞上旧连接，register
+// 又会变成空操作（只有重启浏览器才能恢复）。
+const WS_ID_PREFIX = `ai-bridge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const PERMISSION_PROBE_ID = '__api_gateway_permission_probe__';
 const PORT_START = 49620;
 const PORT_END = 49629;
 const SERVICE_ID = 'easyeda-bridge';
@@ -69,6 +73,14 @@ let manuallyStopped = false;
 let wsIdSeq = 0;
 let activeWsId: string | null = null;
 
+// 正在扫描、尚未 settle 的 WebSocket ID。取消/停用/重载时要全部关掉，
+// 否则它们会在桥接启动后连上但被 attemptFailed 忽略，变成僵尸连接。
+const pendingWsIds = new Set<string>();
+
+// 外部交互权限未开启时，重试没有意义；由看门狗/可见性恢复定期复检。
+let permissionBlocked = false;
+let permissionToastShown = false;
+
 // 上次连上的端口。桥接服务通常固定在同一个端口，记住它能让重连少扫几轮。
 let rememberedPort: number | null = null;
 
@@ -109,6 +121,7 @@ function getConnectionStatus(): {
 	windowId: string | null;
 	retryCount: number;
 	stopped: boolean;
+	permissionBlocked: boolean;
 } {
 	return {
 		connected: handshakeVerified,
@@ -117,6 +130,7 @@ function getConnectionStatus(): {
 		windowId,
 		retryCount,
 		stopped: manuallyStopped,
+		permissionBlocked,
 	};
 }
 
@@ -182,6 +196,55 @@ function closeActiveWebSocket(): void {
 	activeWsId = null;
 }
 
+function isExternalPermissionError(err: unknown): boolean {
+	const message = err instanceof Error ? err.message : String(err);
+	return /外部交互|external interaction|permission|权限/i.test(message);
+}
+
+function showExternalPermissionToast(): void {
+	if (permissionToastShown) {
+		return;
+	}
+	permissionToastShown = true;
+	eda.sys_Message.showToastMessage(
+		eda.sys_I18n.text('External interaction required'),
+		ESYS_ToastMessageType.ERROR,
+	);
+}
+
+/**
+ * 探测扩展的外部交互权限是否已开启。
+ *
+ * `close` 会先做权限检查，再做「ID 是否注册」检查：权限未开启时抛权限错误，
+ * 已开启时抛「不存在已注册的连接」。因此这里不会创建任何连接。
+ */
+function checkExternalInteractionPermission(): boolean {
+	try {
+		eda.sys_WebSocket.close(PERMISSION_PROBE_ID);
+		return true;
+	}
+	catch (err: unknown) {
+		const message = err instanceof Error ? err.message : String(err);
+		// 权限已开启时，close 只会因为「ID 未注册」而抛错
+		if (/不存在已注册|not registered/i.test(message)) {
+			return true;
+		}
+		if (!permissionBlocked) {
+			console.error('[API-Gateway] External interaction probe failed:', message);
+		}
+		permissionBlocked = true;
+		showExternalPermissionToast();
+		return false;
+	}
+}
+
+function closePendingWebSockets(): void {
+	for (const id of pendingWsIds) {
+		closeWebSocketById(id);
+	}
+	pendingWsIds.clear();
+}
+
 /**
  * 向桥接服务发送一条消息。
  *
@@ -206,6 +269,10 @@ function sendToBridge(payload: object, queueOnFailure = false): SendOutcome {
 			return 'sent';
 		}
 		catch (err: unknown) {
+			if (isExternalPermissionError(err)) {
+				permissionBlocked = true;
+				showExternalPermissionToast();
+			}
 			console.warn('[API-Gateway] Failed to send:', err instanceof Error ? err.message : String(err));
 		}
 	}
@@ -262,13 +329,20 @@ function cancelConnectionFlow(resetRetryCount = true): void {
 	if (resetRetryCount) {
 		retryCount = 0;
 	}
+	closePendingWebSockets();
 	closeActiveWebSocket();
 }
 
 function performReconnect(): void {
 	eda.sys_Message.showToastMessage(eda.sys_I18n.text('Reconnecting...'));
 	manuallyStopped = false;
+	// 手动重连时重新检查权限，未开启则再次提示
+	permissionToastShown = false;
 	cancelConnectionFlow();
+	if (!checkExternalInteractionPermission()) {
+		return;
+	}
+	permissionBlocked = false;
 	void scanAndConnect();
 }
 
@@ -285,7 +359,7 @@ function performStopConnection(showToast = true): void {
  */
 function reconnectAfterDrop(): void {
 	cancelConnectionFlow();
-	if (!autoConnectEnabled || manuallyStopped)
+	if (!autoConnectEnabled || manuallyStopped || permissionBlocked)
 		return;
 	void scanAndConnect();
 }
@@ -328,7 +402,10 @@ export function activate(status?: 'onStartupFinished', arg?: string): void {
 	startWatchdog();
 
 	if (autoConnectEnabled) {
-		void scanAndConnect();
+		if (checkExternalInteractionPermission()) {
+			permissionBlocked = false;
+			void scanAndConnect();
+		}
 	}
 }
 
@@ -356,7 +433,7 @@ export async function about(): Promise<void> {
 	let status: string;
 
 	// 通过 messageBus 获取 WebSocket 连接状态
-	let statusInfo = { connected: false, connecting: false, port: 0, windowId: null, retryCount: 0, stopped: false };
+	let statusInfo = { connected: false, connecting: false, port: 0, windowId: null, retryCount: 0, stopped: false, permissionBlocked: false };
 	try {
 		statusInfo = await eda.sys_MessageBus.rpcCall(MBUS_TOPIC_STATUS, undefined, 300);
 	}
@@ -373,6 +450,9 @@ export async function about(): Promise<void> {
 	}
 	else if (statusInfo?.stopped) {
 		status = 'Disconnected (stopped manually)';
+	}
+	else if (statusInfo?.permissionBlocked) {
+		status = 'Disconnected (external interaction disabled)';
 	}
 	else if (statusInfo?.retryCount) {
 		status = `Disconnected (retry #${statusInfo.retryCount})`;
@@ -404,7 +484,12 @@ export async function toggleAutoConnect(): Promise<void> {
 
 	if (nextEnabled) {
 		manuallyStopped = false;
+		permissionToastShown = false;
 		if (!handshakeVerified && !isConnecting) {
+			if (!checkExternalInteractionPermission()) {
+				return;
+			}
+			permissionBlocked = false;
 			retryCount = 0;
 			void scanAndConnect();
 		}
@@ -510,12 +595,12 @@ async function scanAndConnect(): Promise<void> {
 
 	try {
 		for (const port of portCandidates()) {
-			if (!isConnectionSessionActive(sessionId)) {
+			if (!isConnectionSessionActive(sessionId) || permissionBlocked) {
 				return;
 			}
 
 			const found = await tryConnectToPort(port, sessionId);
-			if (!isConnectionSessionActive(sessionId)) {
+			if (!isConnectionSessionActive(sessionId) || permissionBlocked) {
 				return;
 			}
 
@@ -526,6 +611,10 @@ async function scanAndConnect(): Promise<void> {
 				startHeartbeat(sessionId);
 				return;
 			}
+		}
+
+		if (permissionBlocked) {
+			return;
 		}
 
 		retryCount++;
@@ -578,6 +667,7 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 			if (settled)
 				return;
 			settled = true;
+			pendingWsIds.delete(wsId);
 			clearTimeout(timer);
 
 			if (success) {
@@ -599,6 +689,7 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 			return;
 		}
 
+		pendingWsIds.add(wsId);
 		timer = setTimeout(() => settle(false), CONNECTION_TIMEOUT_MS);
 
 		handshakeVerified = false;
@@ -609,8 +700,10 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 				`ws://127.0.0.1:${port}/eda`,
 				// 收到消息的回调（在扫描阶段处理握手，后续处理业务消息）
 				async (event: MessageEvent) => {
-					// 本端口已判定失败（超时/服务不符），迟到消息不再影响全局状态
+					// 本端口已判定失败（超时/服务不符），迟到消息不再影响全局状态；
+					// 兜底再关一次，避免 dispatch 已开始执行时留下未关闭的句柄。
 					if (attemptFailed) {
+						closeWebSocketById(wsId);
 						return;
 					}
 
@@ -649,6 +742,9 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 
 							windowId = id;
 							handshakeVerified = true;
+							// 连接成功说明权限可用，允许下次权限丢失时再次提示
+							permissionBlocked = false;
+							permissionToastShown = false;
 							eda.sys_Message.showToastMessage(
 								`${eda.sys_I18n.text('Bridge connected (port ', undefined, undefined, String(port))})`,
 							);
@@ -675,6 +771,10 @@ function tryConnectToPort(port: number, sessionId: number): Promise<boolean> {
 		catch (e: unknown) {
 			// register 本身抛异常（如权限未开启）
 			console.error('[API-Gateway] Failed to register WebSocket:', e);
+			if (isExternalPermissionError(e)) {
+				permissionBlocked = true;
+				showExternalPermissionToast();
+			}
 			settle(false);
 		}
 	});
@@ -792,6 +892,17 @@ function bindVisibilityRecovery(): void {
 		if (!autoConnectEnabled || manuallyStopped || isConnecting)
 			return;
 
+		if (permissionBlocked) {
+			// 用户可能刚在扩展管理器里开启权限，切回前台时立即复检
+			if (checkExternalInteractionPermission()) {
+				permissionBlocked = false;
+				retryCount = 0;
+				clearRetryTimer();
+				void scanAndConnect();
+			}
+			return;
+		}
+
 		if (handshakeVerified) {
 			// 本地仍标记为已连接，但后台冻结期间心跳可能早已停摆、对端也已经
 			// 摘掉窗口。真实收信沉默超过掉线判定上限就重连，否则补一次心跳探测。
@@ -823,6 +934,15 @@ function startWatchdog(): void {
 	watchdogTimer = setInterval(() => {
 		if (!autoConnectEnabled || manuallyStopped)
 			return;
+		if (permissionBlocked) {
+			// 权限被拒绝时不做无意义的重试，定期复检；用户开启后自动恢复
+			if (checkExternalInteractionPermission()) {
+				permissionBlocked = false;
+				retryCount = 0;
+				void scanAndConnect();
+			}
+			return;
+		}
 		if (handshakeVerified || isConnecting || retryTimer)
 			return;
 

@@ -9,5 +9,6 @@
 	"Bridge connected (port ": "Bridge connected (port ${1}",
 	"Auto-Connect enabled": "Auto-Connect enabled",
 	"Auto-Connect disabled": "Auto-Connect disabled",
-	"Connection stopped": "Connection stopped"
+	"Connection stopped": "Connection stopped",
+	"External interaction required": "Please enable external interaction and try again: Advanced - Extension Manager - Run API Gateway - Config - Allow External Interaction."
 }
